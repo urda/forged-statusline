@@ -274,8 +274,6 @@ are throttled like successful checks.
 | Variable                                      | Default                                                                                          | Effect                             |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------- |
 | `URDA_AI_FORGED_STATUS_LINE_UPDATE_CHECK`     | `1`                                                                                              | `0` disables fetches and the badge |
-| `URDA_AI_FORGED_STATUS_LINE_VERSION_URL`      | `https://raw.githubusercontent.com/urda/forged-statusline/release/VERSION`                       | Published version                  |
-| `URDA_AI_FORGED_STATUS_LINE_UPDATE_URL`       | `https://raw.githubusercontent.com/urda/forged-statusline/release/urda-com-forged-statusline.sh` | Self-update source                 |
 
 The checker state directory matches the rate-limit cache directory.
 
