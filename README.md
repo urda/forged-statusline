@@ -5,7 +5,7 @@
 </p>
 
 [![Claude Code - Native](https://img.shields.io/badge/Claude_Code-Native-D97757?logo=claudecode&logoColor=D97757&logoSize=auto)](#install)
-[![Antigravity CLI - Supported](https://img.shields.io/badge/Antigravity_CLI-Supported-a56cc1?logo=googlegemini&logoColor=a56cc1&logoSize=auto)](#other-hosts)
+[![Antigravity CLI - Supported](https://img.shields.io/badge/Antigravity_CLI-Supported-a56cc1?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI%2BPHBhdGggZmlsbD0iI2E1NmNjMSIgZD0iTTIxLjc1MSAyMi41NTJjMS4zNCAxLjAwNSAzLjM1LjMzNSAxLjUwOC0xLjUwNy01LjUyOC01LjM2LTQuMzU1LTIwLjEtMTEuMjIyLTIwLjFTNi4zNDIgMTUuNjg2LjgxNSAyMS4wNDZjLTIuMDEgMi4wMS4xNjcgMi41MTIgMS41MDcgMS41MDcgNS4xOTItMy41MTcgNC44NTctOS43MTUgOS43MTUtOS43MTVzNC41MjIgNi4xOTggOS43MTQgOS43MTUiLz48L3N2Zz4%3D&logoSize=auto)](#other-hosts)
 [![Copilot CLI - Supported](https://img.shields.io/badge/Copilot_CLI-Supported-000000?logo=githubcopilot&logoColor=000000&logoSize=auto)](#other-hosts)
 [![CI/CD](https://img.shields.io/github/actions/workflow/status/urda/forged-statusline/cicd.yaml?branch=master&logo=githubactions&logoColor=white&logoSize=auto&label=CI/CD)](https://github.com/urda/forged-statusline/actions/workflows/cicd.yaml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue?logo=apache&logoColor=blue&logoSize=auto)](LICENSE)
