@@ -7,8 +7,8 @@
 [![Claude Code - Native](https://img.shields.io/badge/Claude_Code-Native-D97757?logo=claudecode&logoColor=D97757&logoSize=auto)](#install)
 [![Antigravity CLI - Supported](https://img.shields.io/badge/Antigravity_CLI-Supported-a56cc1?logo=googlegemini&logoColor=a56cc1&logoSize=auto)](#other-hosts)
 [![Copilot CLI - Supported](https://img.shields.io/badge/Copilot_CLI-Supported-000000?logo=githubcopilot&logoColor=000000&logoSize=auto)](#other-hosts)
-[![CI/CD](https://github.com/urda/forged-statusline/actions/workflows/cicd.yaml/badge.svg)](https://github.com/urda/forged-statusline/actions/workflows/cicd.yaml)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![CI/CD](https://img.shields.io/github/actions/workflow/status/urda/forged-statusline/cicd.yaml?branch=master&logo=githubactions&logoColor=white&logoSize=auto&label=CI/CD)](https://github.com/urda/forged-statusline/actions/workflows/cicd.yaml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue?logo=apache&logoColor=blue&logoSize=auto)](LICENSE)
 
 **A two-row status line for Claude Code: model and modes above, live context and
 rate-limit gauges below.**
@@ -306,7 +306,7 @@ are deterministic.
 
 ## License
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue?logo=apache&logoColor=blue&logoSize=auto)](LICENSE)
 
 Copyright 2026 Peter Urda
 
