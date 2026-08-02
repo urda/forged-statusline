@@ -4,6 +4,9 @@
   <a href="https://anvil.urda.com/forged-statusline/"><img src="https://anvil.urda.com/forged-statusline/res/img/icon.png" alt="Urda Anvil AI Logo" width="200"></a>
 </p>
 
+[![Claude Code - Native](https://img.shields.io/badge/Claude_Code-Native-D97757?style=plastic&logo=claudecode&logoColor=D97757&logoSize=auto)](#install)
+[![Antigravity CLI - Supported](https://img.shields.io/badge/Antigravity_CLI-Supported-a56cc1?style=plastic&logo=googlegemini&logoColor=a56cc1&logoSize=auto)](#other-hosts)
+[![Copilot CLI - Supported](https://img.shields.io/badge/Copilot_CLI-Supported-000000?style=plastic&logo=githubcopilot&logoColor=000000&logoSize=auto)](#other-hosts)
 [![CI/CD](https://github.com/urda/forged-statusline/actions/workflows/cicd.yaml/badge.svg)](https://github.com/urda/forged-statusline/actions/workflows/cicd.yaml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
