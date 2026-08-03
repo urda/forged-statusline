@@ -185,6 +185,22 @@ clamp_percent() {
   fi
 }
 
+normalize_epoch() {
+  #   normalize_epoch <var> [<fallback>]
+  # Reduce a clock reading to a plain epoch integer, in place. Leading zeros
+  # drop so arithmetic never reads the value as octal; anything arithmetic
+  # cannot hold becomes the fallback (default 0).
+  local __v="${1}" __fb="${2-0}" __digits
+  if [[ "${!__v}" =~ ^0*([0-9]+)$ ]]; then
+    __digits="${BASH_REMATCH[1]}"
+    if (( ${#__digits} <= MAX_SAFE_DIGITS )); then
+      printf -v "${__v}" '%s' "${__digits}"
+      return
+    fi
+  fi
+  printf -v "${__v}" '%s' "${__fb}"
+}
+
 sanitize_cache_pair() {
   #   sanitize_cache_pair <pct_var> <reset_var>
   # Blank a half the cache reader would reject.
@@ -359,7 +375,8 @@ rate_gauge() {
     seg __seg "${__ico}" "${GRAY}${label}${RESET} ${__bar}"
     __frag="${SEP}${__seg}"
     # A reset Bash arithmetic cannot hold is treated as absent, not fatal.
-    if is_integer "${reset}" && (( ${#reset} <= MAX_SAFE_DIGITS )); then
+    normalize_epoch reset ""
+    if [[ -n "${reset}" ]]; then
       format_countdown __cd "${reset}" "${now}"
       __frag+=" ${GRAY}${__cd}${RESET}"
     fi
@@ -431,7 +448,7 @@ write_cache() {
   fi
 
   # Only complete pairs with non-regressing resets replace cached windows.
-  # The unlocked race self-corrects on the next render.
+  # The unlocked race lasts until a render with a newer complete pair.
   if [[ -n "${new_5h_pct}" && -n "${new_5h_reset}" && ( -z "${cur_5h_reset}" || "${new_5h_reset}" -ge "${cur_5h_reset}" ) ]]; then
     eff_5h_pct="${new_5h_pct}"; eff_5h_reset="${new_5h_reset}"
   else
@@ -451,9 +468,17 @@ write_cache() {
     return
   fi
 
-  # Write atomically and omit absent windows.
+  # Write atomically and omit absent windows. umask keeps the state private;
+  # mktemp keeps the swap name unpredictable in a shared directory. Mirror
+  # atomic_write_state's directory stance (jq streams here, so the helper
+  # does not fit): self-heal a planted empty dir, refuse the rest.
+  umask 077
   mkdir -p "${dir}"
-  TMP="${file}.$$.tmp"
+  rmdir "${file}" 2>/dev/null || :
+  if [[ -d "${file}" ]]; then
+    return
+  fi
+  TMP="$(mktemp "${file}.XXXXXX")" || return
   jq -n \
     --argjson now "${NOW:-0}" \
     --arg p5 "${eff_5h_pct}" --arg r5 "${eff_5h_reset}" \
@@ -464,6 +489,11 @@ write_cache() {
      + (if $p7 != "" then {rate_7d_pct: ($p7 | tonumber)} else {} end)
      + (if $r7 != "" then {rate_7d_reset: ($r7 | tonumber)} else {} end)' \
     > "${TMP}"
+  # Recheck: the path can become a directory after mktemp.
+  if [[ -d "${file}" ]]; then
+    rm -f "${TMP}"
+    return
+  fi
   mv -f "${TMP}" "${file}"
 
   # Bash 3.2 may skip EXIT traps when a background function falls through.
@@ -471,20 +501,49 @@ write_cache() {
 }
 
 # --- optional update check (opt-out, on by default) -------------------------
+atomic_write_state() {
+  #   atomic_write_state <target> <value>
+  # mktemp + mv: never write through an existing file or a planted symlink,
+  # and never strand the temp file on a failed step. A planted directory is
+  # removed only when empty (rmdir); anything still standing is refused,
+  # because mv would drop the temp file inside it.
+  local target="${1}" value="${2}" tmp
+  rmdir "${target}" 2>/dev/null || :
+  [[ ! -d "${target}" ]] || return 1
+  tmp="$(mktemp "${target}.XXXXXX")" || return 1
+  if ! printf '%s' "${value}" > "${tmp}"; then
+    rm -f "${tmp}"
+    return 1
+  fi
+  # Recheck: the path can become a directory after mktemp.
+  if [[ -d "${target}" ]]; then
+    rm -f "${tmp}"
+    return 1
+  fi
+  if ! mv -f "${tmp}" "${target}"; then
+    rm -f "${tmp}"
+    return 1
+  fi
+}
+
 update_check() {
   # Fetch VERSION independently of cache writes.
   # lockdir is global for the EXIT trap; fetched guards the set -u child.
-  local stale_after fetched="" status held_at tmp url
+  local stale_after fetched="" status held_at url
 
   lockdir="${UPDATE_STATE_DIR}/update-check.lock"
   stale_after=60  # cushion curl's total and wget's per-operation timeout
 
+  # umask keeps the state directory and its files private.
+  umask 077
   mkdir -p "${UPDATE_STATE_DIR}" || return
 
   # A stale-lock race can only duplicate a fetch.
   if ! mkdir "${lockdir}" 2>/dev/null; then
     # GNU and BSD stat use different formatting flags.
     held_at="$(stat -c %Y "${lockdir}" 2>/dev/null || stat -f %m "${lockdir}" 2>/dev/null || echo "${NOW:-0}")"
+    # Unreadable stat output counts as fresh, so a live fetch keeps its lock.
+    normalize_epoch held_at "${NOW:-0}"
     if (( ${NOW:-0} - held_at < stale_after )); then
       return
     fi
@@ -506,14 +565,12 @@ update_check() {
   fi
 
   # A killed downloader retries because it never records completion.
-  printf '%s' "${NOW:-0}" > "${UPDATE_STATE_DIR}/last_check"
+  atomic_write_state "${UPDATE_STATE_DIR}/last_check" "${NOW:-0}" || :
 
   # Accept only strict X.Y.Z responses.
   fetched="${fetched//[[:space:]]/}"
   if (( status == 0 )) && [[ "${fetched}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    tmp="${UPDATE_STATE_DIR}/remote_version.$$.tmp"
-    printf '%s' "${fetched}" > "${tmp}"
-    mv -f "${tmp}" "${UPDATE_STATE_DIR}/remote_version"
+    atomic_write_state "${UPDATE_STATE_DIR}/remote_version" "${fetched}" || :
   fi
 
   # Bash 3.2 needs an explicit exit to release the lock.
@@ -660,8 +717,10 @@ if is_integer "${CTX_SIZE}" && (( CTX_SIZE > 0 && CTX_SIZE < CTX_FULL_WINDOW ));
   humanize_window CTX_BADGE "${CTX_SIZE}"
 fi
 
-# Bash 3.2 needs date; DEBUG_NOW keeps tests deterministic.
+# Bash 3.2 needs date; DEBUG_NOW keeps tests deterministic. A DEBUG_NOW the
+# arithmetic cannot hold falls through to the real clock.
 NOW="${URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW:-}"
+normalize_epoch NOW ""
 if [[ -z "${NOW}" ]]; then
   if (( BASH_VERSINFO[0] >= 5 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 2) )); then
     printf -v NOW '%(%s)T' -1
@@ -669,6 +728,8 @@ if [[ -z "${NOW}" ]]; then
     NOW="$(date +%s)"
   fi
 fi
+# Whichever branch chose the clock, arithmetic only ever sees an integer.
+normalize_epoch NOW
 
 # Compare every render so an installed update clears the badge immediately.
 UPDATE_BADGE=""
@@ -722,14 +783,14 @@ if (( UPDATE_CHECK_ON )); then
   if [[ -f "${UPDATE_STATE_DIR}/last_check" ]]; then
     _last_check="$(<"${UPDATE_STATE_DIR}/last_check")"
   fi
-  is_integer "${_last_check}" || _last_check=0
+  normalize_epoch _last_check
   if (( NOW - _last_check >= UPDATE_CHECK_INTERVAL )); then
     UPDATE_CHECK_DUE=1
   fi
   unset _last_check
 fi
 
-# Detach every fd from the renderer capture pipe.
+# Detach the standard fds from the renderer capture pipe.
 if (( WRITE_CACHE_ON )); then
   { set -euo pipefail; trap '' HUP; write_cache; } >/dev/null 2>&1 </dev/null &
 fi

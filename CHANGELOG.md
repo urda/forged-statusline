@@ -1,5 +1,30 @@
 # Urda's Forged Status Line CHANGELOG
 
+## [Unreleased]
+
+### Changed
+
+- README now opens with a demo screenshot (`docs/img/demo.png`) and drops the
+  text render examples it duplicated; the sample model name is current.
+
+### Security
+
+- State files (the rate-limit cache, `last_check`, and `remote_version`) are
+  now written through private (`umask 077`) `mktemp` swaps instead of
+  predictable `.$$.tmp` names or in-place redirects. A pre-existing
+  world-readable state file goes private on its next write, and a symlink or
+  directory planted at a state path is replaced or refused, never written
+  through.
+
+### Fixed
+
+- Clock values now normalize to plain epoch integers before any arithmetic:
+  the debug clock (`URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW`), the rate-limit
+  reset epochs, the update-check `last_check` state, and the update-lock
+  timestamp. A malformed value such as `08` (invalid octal in bash
+  arithmetic) or an arithmetic-expression shape previously broke countdown
+  and throttle math; it now degrades to the real clock or a safe default.
+
 ## [1.0.1] - 2026-08-03
 
 ### Changed
