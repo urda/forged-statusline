@@ -2083,6 +2083,9 @@ run_theme_case "Default (theme unset) stays dark" \
 run_theme_case "Junk theme stays dark" \
   chartreuse $'\033[90m' $'\033[38;5;240m' \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/dev/urda/forged-statusline"},"context_window":{"used_percentage":20}}'
+run_theme_case "Light retints cyan badges to dark teal (36m -> 38;5;30m)" \
+  light $'\033[38;5;30m' $'\033[36m' \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/dev/urda/forged-statusline"},"context_window":{"used_percentage":20,"context_window_size":200000},"effort":{"level":"high"}}'
 # Light mode and icon removal remain independent.
 export URDA_AI_FORGED_STATUS_LINE_ICONS=0
 run_theme_case "Light survives icons-off (retint holds, line non-empty)" \

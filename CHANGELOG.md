@@ -1,5 +1,19 @@
 # Urda's Forged Status Line CHANGELOG
 
+## [1.0.1] - 2026-08-03
+
+### Changed
+
+- README badge work: consistent badge styles, an embedded Antigravity mark,
+  and trimmed values from the README that should not be user touched most
+  days.
+
+### Fixed
+
+- Light theme now retints cyan to a dark teal (`38;5;30`); palette cyan
+  washed out on white backgrounds. Affects the context-window badge, the
+  effort readout, and the update badge.
+
 ## [1.0.0] - 2026-07-28
 
 First public release of Urda's Forged Status Line (`FSL`, `fsl`).
@@ -33,4 +47,5 @@ First public release of Urda's Forged Status Line (`FSL`, `fsl`).
   favor of a normal render.
 - Bash 3.2 and `jq` 1.6 minimums, both asserted by CI rather than assumed.
 
+[1.0.1]: https://github.com/urda/forged-statusline/releases/tag/v1.0.1
 [1.0.0]: https://github.com/urda/forged-statusline/releases/tag/v1.0.0

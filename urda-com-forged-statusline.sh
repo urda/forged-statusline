@@ -15,7 +15,7 @@
 # No `set -e`: a non-zero exit or empty stdout blanks the status line.
 #
 # Self-overridable so tests can compare cached and local versions.
-URDA_AI_FORGED_STATUS_LINE_VERSION="${URDA_AI_FORGED_STATUS_LINE_VERSION:-1.0.0}"
+URDA_AI_FORGED_STATUS_LINE_VERSION="${URDA_AI_FORGED_STATUS_LINE_VERSION:-1.0.1}"
 
 # --- manual self-update (user-invoked) --------------------------------------
 update_self() {
@@ -128,6 +128,7 @@ YELLOW=$'\033[33m'
 # Light mode retints only colors that wash out on white.
 case "${URDA_AI_FORGED_STATUS_LINE_THEME:-dark}" in
   light)
+    CYAN=$'\033[38;5;30m'    # palette cyan is pale on white; dark teal reads
     GRAY=$'\033[38;5;240m'   # bright-black is faint on white; mid-gray reads
     WHITE=$'\033[39m'        # default fg adapts; forced bright-white washes out
     ;;

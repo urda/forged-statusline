@@ -171,10 +171,10 @@ Set configuration in the `env` block of `~/.claude/settings.json`:
 
 ### Display
 
-| Variable                           | Default | Effect                                                     |
-| ---------------------------------- | ------- | ---------------------------------------------------------- |
-| `URDA_AI_FORGED_STATUS_LINE_ICONS` | `1`     | `0` hides every icon; other values keep icons on           |
-| `URDA_AI_FORGED_STATUS_LINE_THEME` | `dark`  | `light` retints gray and model text; other values use dark |
+| Variable                           | Default | Effect                                                                   |
+| ---------------------------------- | ------- | ------------------------------------------------------------------------ |
+| `URDA_AI_FORGED_STATUS_LINE_ICONS` | `1`     | `0` hides every icon; other values keep icons on                         |
+| `URDA_AI_FORGED_STATUS_LINE_THEME` | `dark`  | `light` retints gray, model text, and cyan badges; other values use dark |
 
 Icons remain swap-only: use the master switch to hide them without leaving
 spacing gaps.
