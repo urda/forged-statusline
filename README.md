@@ -18,18 +18,6 @@ See the demo and gallery at
 
 ![Forged Status Line running in a terminal](docs/img/demo.png)
 
-```text
-🔮 Opus 5 🦾 max | 💾 ~/dev/urda/forged-statusline
-🧠 [██▏     ] 28% | ⏳ 5h [███▌    ] 44% (3h42m) | 🪔 7d [█       ] 14% (5d08h)
-```
-
-With icons disabled:
-
-```text
-Opus 5 max | ~/dev/urda/forged-statusline
-[██▏     ] 28% | 5h [███▌    ] 44% (3h42m) | 7d [█       ] 14% (5d08h)
-```
-
 ## Features
 
 - Model, effort, thinking-disabled state, and abbreviated working directory.
