@@ -318,7 +318,7 @@ seed_completeness_case() {
     failed="true" reason="could not extract the seed block"
   else
     for name in ${allowlist}; do
-      if ! printf '%s\n' "${seeds}" | grep -qE "(^| )${name}="; then
+      if ! grep -qE "(^| )${name}=" <<<"${seeds}"; then
         failed="true" reason="parser destination ${name} is not seeded before the parse"
         break
       fi
@@ -363,12 +363,17 @@ cache_report() {
 
 perm_case() {
   #   perm_case <label> <file>
-  # State files must land private (0600).
+  # State files must land private (0600). Probe GNU stat before BSD: the BSD
+  # form "succeeds" on GNU as filesystem status, so a BSD-first chain
+  # captures noise on Linux, while GNU -c fails cleanly on BSD.
   local label="${1}" file="${2}" mode failed="false" reason=""
-  mode="$(stat -f %Lp "${file}" 2>/dev/null || stat -c %a "${file}" 2>/dev/null)"
-  if [[ "${mode}" != "600" ]]; then
+  mode="$(stat -c %a "${file}" 2>/dev/null || stat -f %Lp "${file}" 2>/dev/null)"
+  if [[ ! "${mode}" =~ ^[0-7]+$ ]]; then
     failed="true"
-    reason="mode ${mode:-<missing>}, want 600"
+    reason="stat probe returned no clean mode: ${mode:-<empty>}"
+  elif [[ "${mode}" != "600" ]]; then
+    failed="true"
+    reason="mode ${mode}, want 600"
   fi
   cache_report "${label}" "${failed}" "${reason}"
 }
@@ -796,6 +801,41 @@ update_fidelity_case() {
   cache_report "${label}" "${failed}" "${reason}"
 }
 
+stat_order_case() {
+  # Every stat fallback chain must probe GNU (-c) before BSD (-f). GNU stat
+  # treats -f as filesystem status: it emits noise on stdout while exiting
+  # nonzero, so a BSD-first chain captures garbage on Linux and the bug only
+  # surfaces in CI. Static check, so either platform catches it at author
+  # time.
+  local label="portability: stat fallbacks probe GNU before BSD"
+  local hits failed="false" reason=""
+  hits="$(grep -nE 'stat -f [^|]*\|\|[^|]*stat -c' \
+    "${STATUSLINE}" "${BASH_SOURCE[0]}" 2>/dev/null)" || :
+  if [[ -n "${hits}" ]]; then
+    failed="true"
+    reason="BSD-first stat chain found; swap to stat -c || stat -f:
+${hits}"
+  fi
+  cache_report "${label}" "${failed}" "${reason}"
+}
+
+grep_pipe_case() {
+  # The suite must not pipe into grep -q: under pipefail, grep -q exits at
+  # the first match, the producer can die with SIGPIPE, and the pipeline
+  # "fails" although the match succeeded. A rare, timing-dependent flake;
+  # use a herestring instead. The bracketed [|] keeps this checker from
+  # matching itself.
+  local label="hygiene: no pipelines into grep -q (SIGPIPE flake)"
+  local hits failed="false" reason=""
+  hits="$(grep -nE '[|] *grep -q' "${BASH_SOURCE[0]}" 2>/dev/null)" || :
+  if [[ -n "${hits}" ]]; then
+    failed="true"
+    reason="pipe into grep -q found; use grep -q ... <<<\"input\" instead:
+${hits}"
+  fi
+  cache_report "${label}" "${failed}" "${reason}"
+}
+
 version_file_case() {
   # Published VERSION must match the renderer's compiled default.
   local label="update-checker: VERSION file matches the in-script default"
@@ -830,13 +870,13 @@ url_default_case() {
   elif [[ "${update_refs}" != "1" ]]; then
     failed="true"
     reason="want exactly one active UPDATE_URL default, found ${update_refs}"
-  elif ! printf '%s\n' "${active}" | grep -qF 'URDA_AI_FORGED_STATUS_LINE_VERSION_URL:-https://raw.githubusercontent.com/urda/forged-statusline/release/VERSION}'; then
+  elif ! grep -qF 'URDA_AI_FORGED_STATUS_LINE_VERSION_URL:-https://raw.githubusercontent.com/urda/forged-statusline/release/VERSION}' <<<"${active}"; then
     failed="true"
     reason="active VERSION_URL default is not the exact release VERSION raw URL"
-  elif ! printf '%s\n' "${active}" | grep -qF 'URDA_AI_FORGED_STATUS_LINE_UPDATE_URL:-https://raw.githubusercontent.com/urda/forged-statusline/release/urda-com-forged-statusline.sh}'; then
+  elif ! grep -qF 'URDA_AI_FORGED_STATUS_LINE_UPDATE_URL:-https://raw.githubusercontent.com/urda/forged-statusline/release/urda-com-forged-statusline.sh}' <<<"${active}"; then
     failed="true"
     reason="active UPDATE_URL default is not the exact release renderer raw URL"
-  elif printf '%s\n' "${active}" | grep -q 'github\.com/urda/forged-statusline/raw/'; then
+  elif grep -q 'github\.com/urda/forged-statusline/raw/' <<<"${active}"; then
     failed="true"
     reason="found an active github.com/.../raw/ redirect URL; curl -fs (no -L) would drop it"
   fi
@@ -2377,6 +2417,8 @@ update_self_mvfail_case "Self-update failed swap preserves the original byte-for
 
 version_file_case
 tail_anchor_case
+stat_order_case
+grep_pipe_case
 update_fidelity_case "Update checks preserve render bytes" \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":28},"rate_limits":{"five_hour":{"used_percentage":32.5,"resets_at":1000013320}}}'
 # umask 077 plus mktemp keep the update-check state private.
