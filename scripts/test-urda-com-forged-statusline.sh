@@ -318,7 +318,7 @@ seed_completeness_case() {
     failed="true" reason="could not extract the seed block"
   else
     for name in ${allowlist}; do
-      if ! printf '%s\n' "${seeds}" | grep -qE "(^| )${name}="; then
+      if ! grep -qE "(^| )${name}=" <<<"${seeds}"; then
         failed="true" reason="parser destination ${name} is not seeded before the parse"
         break
       fi
@@ -359,6 +359,23 @@ cache_report() {
     printf "%s[PASS]%s %s\n\n" "${C_GREEN}" "${C_RESET}" "${label}"
     PASS_COUNT=$(( PASS_COUNT + 1 ))
   fi
+}
+
+perm_case() {
+  #   perm_case <label> <file>
+  # State files must land private (0600). Probe GNU stat before BSD: the BSD
+  # form "succeeds" on GNU as filesystem status, so a BSD-first chain
+  # captures noise on Linux, while GNU -c fails cleanly on BSD.
+  local label="${1}" file="${2}" mode failed="false" reason=""
+  mode="$(stat -c %a "${file}" 2>/dev/null || stat -f %Lp "${file}" 2>/dev/null)"
+  if [[ ! "${mode}" =~ ^[0-7]+$ ]]; then
+    failed="true"
+    reason="stat probe returned no clean mode: ${mode:-<empty>}"
+  elif [[ "${mode}" != "600" ]]; then
+    failed="true"
+    reason="mode ${mode}, want 600"
+  fi
+  cache_report "${label}" "${failed}" "${reason}"
 }
 
 cache_write_case() {
@@ -784,6 +801,41 @@ update_fidelity_case() {
   cache_report "${label}" "${failed}" "${reason}"
 }
 
+stat_order_case() {
+  # Every stat fallback chain must probe GNU (-c) before BSD (-f). GNU stat
+  # treats -f as filesystem status: it emits noise on stdout while exiting
+  # nonzero, so a BSD-first chain captures garbage on Linux and the bug only
+  # surfaces in CI. Static check, so either platform catches it at author
+  # time.
+  local label="portability: stat fallbacks probe GNU before BSD"
+  local hits failed="false" reason=""
+  hits="$(grep -nE 'stat -f [^|]*\|\|[^|]*stat -c' \
+    "${STATUSLINE}" "${BASH_SOURCE[0]}" 2>/dev/null)" || :
+  if [[ -n "${hits}" ]]; then
+    failed="true"
+    reason="BSD-first stat chain found; swap to stat -c || stat -f:
+${hits}"
+  fi
+  cache_report "${label}" "${failed}" "${reason}"
+}
+
+grep_pipe_case() {
+  # The suite must not pipe into grep -q: under pipefail, grep -q exits at
+  # the first match, the producer can die with SIGPIPE, and the pipeline
+  # "fails" although the match succeeded. A rare, timing-dependent flake;
+  # use a herestring instead. The bracketed [|] keeps this checker from
+  # matching itself.
+  local label="hygiene: no pipelines into grep -q (SIGPIPE flake)"
+  local hits failed="false" reason=""
+  hits="$(grep -nE '[|] *grep -q' "${BASH_SOURCE[0]}" 2>/dev/null)" || :
+  if [[ -n "${hits}" ]]; then
+    failed="true"
+    reason="pipe into grep -q found; use grep -q ... <<<\"input\" instead:
+${hits}"
+  fi
+  cache_report "${label}" "${failed}" "${reason}"
+}
+
 version_file_case() {
   # Published VERSION must match the renderer's compiled default.
   local label="update-checker: VERSION file matches the in-script default"
@@ -818,13 +870,13 @@ url_default_case() {
   elif [[ "${update_refs}" != "1" ]]; then
     failed="true"
     reason="want exactly one active UPDATE_URL default, found ${update_refs}"
-  elif ! printf '%s\n' "${active}" | grep -qF 'URDA_AI_FORGED_STATUS_LINE_VERSION_URL:-https://raw.githubusercontent.com/urda/forged-statusline/release/VERSION}'; then
+  elif ! grep -qF 'URDA_AI_FORGED_STATUS_LINE_VERSION_URL:-https://raw.githubusercontent.com/urda/forged-statusline/release/VERSION}' <<<"${active}"; then
     failed="true"
     reason="active VERSION_URL default is not the exact release VERSION raw URL"
-  elif ! printf '%s\n' "${active}" | grep -qF 'URDA_AI_FORGED_STATUS_LINE_UPDATE_URL:-https://raw.githubusercontent.com/urda/forged-statusline/release/urda-com-forged-statusline.sh}'; then
+  elif ! grep -qF 'URDA_AI_FORGED_STATUS_LINE_UPDATE_URL:-https://raw.githubusercontent.com/urda/forged-statusline/release/urda-com-forged-statusline.sh}' <<<"${active}"; then
     failed="true"
     reason="active UPDATE_URL default is not the exact release renderer raw URL"
-  elif printf '%s\n' "${active}" | grep -q 'github\.com/urda/forged-statusline/raw/'; then
+  elif grep -q 'github\.com/urda/forged-statusline/raw/' <<<"${active}"; then
     failed="true"
     reason="found an active github.com/.../raw/ redirect URL; curl -fs (no -L) would drop it"
   fi
@@ -921,7 +973,7 @@ update_nocurl_case() {
   jail="$(mktemp -d)"
   bindir="$(mktemp -d)"
   # Omit curl and wget so the status=127 branch runs.
-  for tool in jq mkdir rmdir stat mv rm date sort tail sed cat ls; do
+  for tool in jq mkdir rmdir stat mv rm date sort tail sed cat ls mktemp; do
     src="$(command -v "${tool}" 2>/dev/null)" && ln -s "${src}" "${bindir}/${tool}"
   done
   json='{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20}}'
@@ -964,7 +1016,7 @@ update_wget_case() {
   local jail bindir tool src failed="false" reason="" json
   jail="$(mktemp -d)"
   bindir="$(mktemp -d)"
-  for tool in jq mkdir rmdir stat mv rm date sort tail sed cat ls; do
+  for tool in jq mkdir rmdir stat mv rm date sort tail sed cat ls mktemp; do
     src="$(command -v "${tool}" 2>/dev/null)" && ln -s "${src}" "${bindir}/${tool}"
   done
   cat > "${bindir}/wget" <<'WGET_SHIM'
@@ -1016,7 +1068,7 @@ update_curl_case() {
   local jail bindir tool src failed="false" reason="" json
   jail="$(mktemp -d)"
   bindir="$(mktemp -d)"
-  for tool in jq mkdir rmdir stat mv rm date sort tail sed cat ls; do
+  for tool in jq mkdir rmdir stat mv rm date sort tail sed cat ls mktemp; do
     src="$(command -v "${tool}" 2>/dev/null)" && ln -s "${src}" "${bindir}/${tool}"
   done
   cat > "${bindir}/curl" <<'CURL_SHIM'
@@ -1652,6 +1704,26 @@ run_case "Missing reset hides countdown" '35%' \
   '('
 unset URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW
 
+section "Debug clock guards"
+# A DEBUG_NOW the arithmetic cannot hold falls through to the real clock.
+export URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW=08
+run_case "Octal-looking DEBUG_NOW still renders" '35%' \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":35,"resets_at":1789448400}}}'
+# An injection-shaped value must fall through, and its payload must never run.
+CANARY_DIR="$(mktemp -d)"
+export URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW="x[\$(touch ${CANARY_DIR}/canary)]"
+run_case "Injection-shaped DEBUG_NOW still renders" '35%' \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":35,"resets_at":1789448400}}}'
+unset URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW
+if [[ -e "${CANARY_DIR}/canary" ]]; then
+  cache_report "Injection payload never executes" "true" \
+    "canary file appeared; arithmetic evaluated the DEBUG_NOW payload"
+else
+  cache_report "Injection payload never executes" "false" ""
+fi
+rm -rf "${CANARY_DIR}"
+unset CANARY_DIR
+
 section "Agy quota"
 # Agy selects a quota pool from the model and inverts remaining to used.
 run_case "Agy Claude uses 3p quota" '15%' \
@@ -2215,6 +2287,51 @@ cache_normalize_case "Fractional cached reset is floored, not carried through" \
   '.rate_5h_reset' '1789449000'
 cache_fidelity_case "Cache writes preserve render bytes" \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":28},"rate_limits":{"five_hour":{"used_percentage":32.5,"resets_at":1000013320},"seven_day":{"used_percentage":9.5,"resets_at":1000187200}}}'
+# umask 077 plus mktemp keep the written cache private.
+PERM_JAIL="$(mktemp -d)"
+render_settled '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":35,"resets_at":1789448400}}}' \
+  URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE=1 \
+  URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE_DIR="${PERM_JAIL}" \
+  URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW=1789430400
+perm_case "Cache file lands private (0600)" "${PERM_JAIL}/cache-claude.json"
+remove_jail "${PERM_JAIL}"
+unset PERM_JAIL
+# The cache writer mirrors the directory stance: empty heals, non-empty
+# is refused untouched.
+cache_dir_case() {
+  #   cache_dir_case <label> <mode: heal|full>
+  local label="${1}" mode="${2}" jail failed="false" reason=""
+  jail="$(mktemp -d)"
+  mkdir "${jail}/cache-claude.json"
+  if [[ "${mode}" == "full" ]]; then
+    printf 'keep' > "${jail}/cache-claude.json/data"
+  fi
+  render_settled '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":35,"resets_at":1789448400}}}' \
+    URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE=1 \
+    URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE_DIR="${jail}" \
+    URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW=1789430400
+  if [[ "${mode}" == "heal" ]]; then
+    if [[ ! -f "${jail}/cache-claude.json" ]]; then
+      failed="true"
+      reason="empty planted dir was not healed into a cache file"
+    elif ! jq -e '.rate_5h_pct == 35' "${jail}/cache-claude.json" >/dev/null 2>&1; then
+      failed="true"
+      reason="healed cache file does not read back"
+    fi
+  else
+    if [[ ! -f "${jail}/cache-claude.json/data" || "$(<"${jail}/cache-claude.json/data")" != "keep" ]]; then
+      failed="true"
+      reason="contents of a non-empty planted dir were disturbed"
+    elif [[ "$(ls -A "${jail}/cache-claude.json")" != "data" ]]; then
+      failed="true"
+      reason="extra files landed inside the refused dir: $(ls -A "${jail}/cache-claude.json")"
+    fi
+  fi
+  remove_jail "${jail}"
+  cache_report "${label}" "${failed}" "${reason}"
+}
+cache_dir_case "Empty planted dir at the cache path self-heals" heal
+cache_dir_case "Non-empty dir at the cache path is refused, contents intact" full
 
 section "Update checker"
 # Badge cases exercise only the synchronous cached-version comparison.
@@ -2300,8 +2417,111 @@ update_self_mvfail_case "Self-update failed swap preserves the original byte-for
 
 version_file_case
 tail_anchor_case
+stat_order_case
+grep_pipe_case
 update_fidelity_case "Update checks preserve render bytes" \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":28},"rate_limits":{"five_hour":{"used_percentage":32.5,"resets_at":1000013320}}}'
+# umask 077 plus mktemp keep the update-check state private.
+PERM_JAIL="$(mktemp -d)"
+PERM_FIXTURE="$(mktemp -d)"
+printf '9.9.9' > "${PERM_FIXTURE}/VERSION"
+render_settled '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20}}' \
+  URDA_AI_FORGED_STATUS_LINE_UPDATE_CHECK=1 \
+  URDA_AI_FORGED_STATUS_LINE_UPDATE_CHECK_DIR="${PERM_JAIL}" \
+  URDA_AI_FORGED_STATUS_LINE_VERSION_URL="file://${PERM_FIXTURE}/VERSION" \
+  URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW=1789430400
+perm_case "Update state last_check lands private (0600)" "${PERM_JAIL}/last_check"
+perm_case "Update state remote_version lands private (0600)" "${PERM_JAIL}/remote_version"
+remove_jail "${PERM_JAIL}" "${PERM_FIXTURE}"
+# A pre-existing world-readable last_check goes private on the next write.
+PERM_JAIL="$(mktemp -d)"
+PERM_FIXTURE="$(mktemp -d)"
+printf '9.9.9' > "${PERM_FIXTURE}/VERSION"
+printf '1' > "${PERM_JAIL}/last_check"
+chmod 644 "${PERM_JAIL}/last_check"
+render_settled '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20}}' \
+  URDA_AI_FORGED_STATUS_LINE_UPDATE_CHECK=1 \
+  URDA_AI_FORGED_STATUS_LINE_UPDATE_CHECK_DIR="${PERM_JAIL}" \
+  URDA_AI_FORGED_STATUS_LINE_VERSION_URL="file://${PERM_FIXTURE}/VERSION" \
+  URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW=1789430400
+perm_case "Existing 0644 last_check goes private on rewrite" "${PERM_JAIL}/last_check"
+remove_jail "${PERM_JAIL}" "${PERM_FIXTURE}"
+# A symlink planted at last_check is replaced, never written through.
+PERM_JAIL="$(mktemp -d)"
+PERM_FIXTURE="$(mktemp -d)"
+printf '9.9.9' > "${PERM_FIXTURE}/VERSION"
+printf 'untouched' > "${PERM_JAIL}/decoy"
+ln -s "${PERM_JAIL}/decoy" "${PERM_JAIL}/last_check"
+render_settled '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20}}' \
+  URDA_AI_FORGED_STATUS_LINE_UPDATE_CHECK=1 \
+  URDA_AI_FORGED_STATUS_LINE_UPDATE_CHECK_DIR="${PERM_JAIL}" \
+  URDA_AI_FORGED_STATUS_LINE_VERSION_URL="file://${PERM_FIXTURE}/VERSION" \
+  URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW=1789430400
+if [[ "$(<"${PERM_JAIL}/decoy")" != "untouched" ]]; then
+  cache_report "Symlinked last_check is not written through" "true" \
+    "decoy content changed; the write followed the symlink"
+elif [[ -L "${PERM_JAIL}/last_check" ]]; then
+  cache_report "Symlinked last_check is not written through" "true" \
+    "last_check is still a symlink; mv did not replace it"
+else
+  cache_report "Symlinked last_check is not written through" "false" ""
+fi
+remove_jail "${PERM_JAIL}" "${PERM_FIXTURE}"
+# A planted directory at last_check: an empty one self-heals via rmdir, a
+# non-empty one is refused with its contents intact, and a directory symlink
+# is refused without touching its target.
+dir_target_case() {
+  #   dir_target_case <label> <mode: heal|full|dirlink>
+  local label="${1}" mode="${2}" jail fixture failed="false" reason=""
+  jail="$(mktemp -d)"
+  fixture="$(mktemp -d)"
+  printf '9.9.9' > "${fixture}/VERSION"
+  case "${mode}" in
+    heal) mkdir "${jail}/last_check" ;;
+    full) mkdir "${jail}/last_check"; printf 'keep' > "${jail}/last_check/data" ;;
+    dirlink) mkdir "${jail}/decoy-dir"; ln -s "${jail}/decoy-dir" "${jail}/last_check" ;;
+  esac
+  render_settled '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20}}' \
+    URDA_AI_FORGED_STATUS_LINE_UPDATE_CHECK=1 \
+    URDA_AI_FORGED_STATUS_LINE_UPDATE_CHECK_DIR="${jail}" \
+    URDA_AI_FORGED_STATUS_LINE_VERSION_URL="file://${fixture}/VERSION" \
+    URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW=1789430400
+  case "${mode}" in
+    heal)
+      if [[ ! -f "${jail}/last_check" ]]; then
+        failed="true"
+        reason="empty planted dir was not healed into a state file"
+      elif [[ "$(<"${jail}/last_check")" != "1789430400" ]]; then
+        failed="true"
+        reason="healed last_check holds $(<"${jail}/last_check"), want 1789430400"
+      fi
+      ;;
+    full)
+      if [[ ! -f "${jail}/last_check/data" || "$(<"${jail}/last_check/data")" != "keep" ]]; then
+        failed="true"
+        reason="contents of a non-empty planted dir were disturbed"
+      elif [[ "$(ls -A "${jail}/last_check")" != "data" ]]; then
+        failed="true"
+        reason="extra files landed inside the refused dir: $(ls -A "${jail}/last_check")"
+      fi
+      ;;
+    dirlink)
+      if [[ -n "$(ls -A "${jail}/decoy-dir")" ]]; then
+        failed="true"
+        reason="files landed inside the symlink's target dir"
+      elif [[ ! -L "${jail}/last_check" ]]; then
+        failed="true"
+        reason="directory symlink was removed; the guard should refuse instead"
+      fi
+      ;;
+  esac
+  remove_jail "${jail}" "${fixture}"
+  cache_report "${label}" "${failed}" "${reason}"
+}
+dir_target_case "Empty planted dir at last_check self-heals" heal
+dir_target_case "Non-empty dir at last_check is refused, contents intact" full
+dir_target_case "Directory symlink at last_check is refused, never followed" dirlink
+unset PERM_JAIL PERM_FIXTURE
 
 section "Command flags"
 # Recognized flags answer and exit; anything else must still render.

@@ -16,17 +16,7 @@ rate-limit gauges below.**
 See the demo and gallery at
 [anvil.urda.com/forged-statusline](https://anvil.urda.com/forged-statusline/).
 
-```text
-🔮 Opus 4.8 🦾 max | 💾 ~/dev/urda/forged-statusline
-🧠 [██▏     ] 28% | ⏳ 5h [███▌    ] 44% (3h42m) | 🪔 7d [█       ] 14% (5d08h)
-```
-
-With icons disabled:
-
-```text
-Opus 4.8 max | ~/dev/urda/forged-statusline
-[██▏     ] 28% | 5h [███▌    ] 44% (3h42m) | 7d [█       ] 14% (5d08h)
-```
+![Forged Status Line running in a terminal](docs/img/demo.png)
 
 ## Features
 
