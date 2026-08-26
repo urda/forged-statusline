@@ -212,6 +212,52 @@ sanitize_cache_pair() {
   fi
 }
 
+pct_gt() {
+  #   pct_gt <a> <b>
+  # True when a is numerically greater than b. The cached percentages carry
+  # fractions Bash arithmetic cannot compare, so the compare goes through awk.
+  # Both are already sanitized to a bare decimal, so awk sees a number and
+  # never an expression. The + 0 forces a numeric compare: awk compares an
+  # empty b against a as strings otherwise, which reaches the right answer
+  # here for the wrong reason.
+  awk -v a="${1}" -v b="${2}" 'BEGIN { exit !((a + 0) > (b + 0)) }'
+}
+
+pick_cache_window() {
+  #   pick_cache_window <eff_pct_var> <eff_reset_var> \
+  #                     <new_pct> <new_reset> <cur_pct> <cur_reset>
+  # Choose the surviving pair for one window.
+  #
+  # Several sessions each rewrite this file every refresh, and an idle one
+  # carries a snapshot minutes or hours old. Its pair is complete and
+  # non-regressing, so a reset comparison alone admits it and the fresher
+  # reading is lost. Usage inside an open window only accrues, so the larger
+  # percentage is the fresher reading. Keeping it makes concurrent writers
+  # converge, and it settles the unlocked read-modify-write race for free.
+  #
+  # A newer reset still takes the incoming pair whole: a rollover resets
+  # usage, so a lower percentage is correct across a window boundary.
+  local __p="${1}" __r="${2}"
+  local __np="${3}" __nr="${4}" __cp="${5}" __cr="${6}"
+  local __take="false"
+
+  if [[ -n "${__np}" && -n "${__nr}" ]]; then
+    if [[ -z "${__cr}" ]] || (( __nr > __cr )); then
+      __take="true"
+    elif (( __nr == __cr )) && pct_gt "${__np}" "${__cp}"; then
+      __take="true"
+    fi
+  fi
+
+  if [[ "${__take}" == "true" ]]; then
+    printf -v "${__p}" '%s' "${__np}"
+    printf -v "${__r}" '%s' "${__nr}"
+  else
+    printf -v "${__p}" '%s' "${__cp}"
+    printf -v "${__r}" '%s' "${__cr}"
+  fi
+}
+
 normalize_pair() {
   #   normalize_pair <out_warn> <out_alarm> <warn> <alarm>
   # Accept one valid increasing pair of 0-100 integers, leaving both outputs
@@ -389,8 +435,8 @@ write_cache() {
   # ${VAR:-} protects the detached child's set -u after a jq failure.
   local dir file cached
   local new_5h_pct new_5h_reset new_7d_pct new_7d_reset
-  local cur_5h_pct cur_5h_reset cur_7d_pct cur_7d_reset
-  local eff_5h_pct eff_5h_reset eff_7d_pct eff_7d_reset
+  local cur_5h_pct cur_5h_reset cur_7d_pct cur_7d_reset cur_observed
+  local eff_5h_pct eff_5h_reset eff_7d_pct eff_7d_reset observed
 
   # Global for the child EXIT trap.
   TMP=""
@@ -419,8 +465,8 @@ write_cache() {
     *) return ;;
   esac
 
-  cur_5h_pct=""; cur_5h_reset=""; cur_7d_pct=""; cur_7d_reset=""
-  # Read the cache as one object rather than four independent fields: slurping
+  cur_5h_pct=""; cur_5h_reset=""; cur_7d_pct=""; cur_7d_reset=""; cur_observed=""
+  # Read the cache as one object rather than five independent fields: slurping
   # drops any trailing documents, a window counts only as a complete pair of
   # sane numbers, and flooring the reset keeps the comparisons below inside
   # Bash arithmetic. Anything else reads as absent and gets overwritten.
@@ -433,9 +479,10 @@ write_cache() {
         else ["", ""] end;
       ((.[0] // {}) | if type == "object" then . else {} end) as $c
       | window($c.rate_5h_pct; $c.rate_5h_reset) + window($c.rate_7d_pct; $c.rate_7d_reset)
+        + [if ($c.observed_at | sane) then ($c.observed_at | floor | tostring) else "" end]
       | join("\u001f")
     ' "${file}" 2>/dev/null)" || cached=""
-    IFS=$'\037' read -r cur_5h_pct cur_5h_reset cur_7d_pct cur_7d_reset <<< "${cached}"
+    IFS=$'\037' read -r cur_5h_pct cur_5h_reset cur_7d_pct cur_7d_reset cur_observed <<< "${cached}"
   fi
 
   # No incoming data: write nothing, but still drop a file that reads as
@@ -447,17 +494,19 @@ write_cache() {
     return
   fi
 
-  # Only complete pairs with non-regressing resets replace cached windows.
-  # The unlocked race lasts until a render with a newer complete pair.
-  if [[ -n "${new_5h_pct}" && -n "${new_5h_reset}" && ( -z "${cur_5h_reset}" || "${new_5h_reset}" -ge "${cur_5h_reset}" ) ]]; then
-    eff_5h_pct="${new_5h_pct}"; eff_5h_reset="${new_5h_reset}"
+  # Concurrent writers all apply the same reset-keyed max() rule, so the
+  # unlocked race converges on the freshest reading instead of the last writer.
+  pick_cache_window eff_5h_pct eff_5h_reset \
+    "${new_5h_pct}" "${new_5h_reset}" "${cur_5h_pct}" "${cur_5h_reset}"
+  pick_cache_window eff_7d_pct eff_7d_reset \
+    "${new_7d_pct}" "${new_7d_reset}" "${cur_7d_pct}" "${cur_7d_reset}"
+
+  # observed_at moves only when an effective percentage moves; a re-stamped
+  # plateau carries the old stamp forward so consumers can spot a stale value.
+  if [[ "${eff_5h_pct}" != "${cur_5h_pct}" || "${eff_7d_pct}" != "${cur_7d_pct}" ]]; then
+    observed="${NOW:-0}"
   else
-    eff_5h_pct="${cur_5h_pct}"; eff_5h_reset="${cur_5h_reset}"
-  fi
-  if [[ -n "${new_7d_pct}" && -n "${new_7d_reset}" && ( -z "${cur_7d_reset}" || "${new_7d_reset}" -ge "${cur_7d_reset}" ) ]]; then
-    eff_7d_pct="${new_7d_pct}"; eff_7d_reset="${new_7d_reset}"
-  else
-    eff_7d_pct="${cur_7d_pct}"; eff_7d_reset="${cur_7d_reset}"
+    observed="${cur_observed:-${NOW:-0}}"
   fi
 
   if [[ -z "${eff_5h_reset}" && -z "${eff_7d_reset}" ]]; then
@@ -481,9 +530,10 @@ write_cache() {
   TMP="$(mktemp "${file}.XXXXXX")" || return
   jq -n \
     --argjson now "${NOW:-0}" \
+    --argjson observed "${observed:-0}" \
     --arg p5 "${eff_5h_pct}" --arg r5 "${eff_5h_reset}" \
     --arg p7 "${eff_7d_pct}" --arg r7 "${eff_7d_reset}" \
-    '{schema: 1, written_at: $now}
+    '{schema: 2, written_at: $now, observed_at: $observed}
      + (if $p5 != "" then {rate_5h_pct: ($p5 | tonumber)} else {} end)
      + (if $r5 != "" then {rate_5h_reset: ($r5 | tonumber)} else {} end)
      + (if $p7 != "" then {rate_7d_pct: ($p7 | tonumber)} else {} end)

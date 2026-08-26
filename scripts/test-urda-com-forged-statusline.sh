@@ -484,6 +484,31 @@ cache_second_case() {
   cache_report "${label}" "${failed}" "${reason}"
 }
 
+cache_observed_case() {
+  #   cache_observed_case <label> <json1> <now1> <json2> <now2> <expect_observed>
+  # Render twice with distinct clocks and judge the surviving observed_at;
+  # written_at must always carry the second clock.
+  local label="${1}" json1="${2}" now1="${3}" json2="${4}" now2="${5}" expect="${6}"
+  local jail file failed="false" reason="" got_observed got_written
+  jail="$(mktemp -d)"
+  file="${jail}/cache-claude.json"
+  render_settled "${json1}" \
+    URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE=1 URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE_DIR="${jail}" URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW="${now1}"
+  render_settled "${json2}" \
+    URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE=1 URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE_DIR="${jail}" URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW="${now2}"
+  got_observed="$(jq -r '.observed_at' "${file}" 2>/dev/null)" || got_observed="<jq-error>"
+  got_written="$(jq -r '.written_at' "${file}" 2>/dev/null)" || got_written="<jq-error>"
+  if [[ "${got_observed}" != "${expect}" ]]; then
+    failed="true"
+    reason="observed_at is ${got_observed}, want ${expect}"
+  elif [[ "${got_written}" != "${now2}" ]]; then
+    failed="true"
+    reason="written_at is ${got_written}, want ${now2}"
+  fi
+  remove_jail "${jail}"
+  cache_report "${label}" "${failed}" "${reason}"
+}
+
 cache_seeded_reader_case() {
   #   cache_seeded_reader_case <label> <seed_json> <json> <filter> <expect>
   # Seed the cache file directly with values the writer could never produce,
@@ -2170,14 +2195,14 @@ section "Rate-limit cache"
 cache_write_case "Claude cache schema" \
   1789430400 cache-claude.json \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":28},"rate_limits":{"five_hour":{"used_percentage":32.5,"resets_at":1789448400},"seven_day":{"used_percentage":9.5,"resets_at":1789887600}}}' \
-  '.schema=1' '.written_at=1789430400' \
+  '.schema=2' '.written_at=1789430400' '.observed_at=1789430400' \
   '.rate_5h_pct=32.5' '.rate_5h_reset=1789448400' \
   '.rate_7d_pct=9.5' '.rate_7d_reset=1789887600'
 agy_pool_case "Agy pools cache independently across a model switch"
 cache_write_case "Agy cache normalization" \
   1700000000 cache-agy-3p.json \
   '{"product":"antigravity","model":{"display_name":"Claude Sonnet 4.6"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":20},"quota":{"3p-5h":{"remaining_fraction":0.5,"reset_time":"2026-07-14T00:00:00Z"},"3p-weekly":{"remaining_fraction":0.75,"reset_time":"2026-07-20T00:00:00Z"}}}' \
-  '.schema=1' '.written_at=1700000000' \
+  '.schema=2' '.written_at=1700000000' '.observed_at=1700000000' \
   '.rate_5h_pct=50' '.rate_5h_reset=1783987200' \
   '.rate_7d_pct=25' '.rate_7d_reset=1784505600'
 cache_write_case "Partial cache omits absent window" \
@@ -2196,6 +2221,43 @@ cache_second_case "Equal 7d reset still updates the percentage" \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"seven_day":{"used_percentage":10,"resets_at":1789887600}}}' \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"seven_day":{"used_percentage":55,"resets_at":1789887600}}}' \
   '.rate_7d_pct' '55'
+# An idle session replays an hours-old snapshot under the same reset epoch.
+# Usage inside one window only accrues, so the higher percentage is fresher
+# and must survive the equal-reset write.
+cache_second_case "Equal 5h reset keeps the higher percentage" \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":1789448400}}}' \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":8,"resets_at":1789448400}}}' \
+  '.rate_5h_pct' '40'
+cache_second_case "Equal 7d reset keeps the higher percentage" \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"seven_day":{"used_percentage":23,"resets_at":1789887600}}}' \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"seven_day":{"used_percentage":21,"resets_at":1789887600}}}' \
+  '.rate_7d_pct' '23'
+# A rollover legitimately lowers the percentage: a newer reset takes the
+# incoming pair whole, so a naive max() must not pin the pre-rollover value.
+cache_second_case "Newer 5h reset takes the lower percentage" \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":88,"resets_at":1789448400}}}' \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":3,"resets_at":1789466400}}}' \
+  '.rate_5h_pct' '3'
+# Fractional percentages cannot go through Bash arithmetic; the equal-reset
+# compare must still order them numerically.
+cache_second_case "Equal reset compares fractional percentages" \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":3.9,"resets_at":1789448400}}}' \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":3.7,"resets_at":1789448400}}}' \
+  '.rate_5h_pct' '3.9'
+# observed_at moves only with an effective percentage; written_at always
+# carries the render clock.
+cache_observed_case "Movement stamps observed_at with the new clock" \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":1789448400}}}' \
+  1789430400 \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":41,"resets_at":1789448400}}}' \
+  1789430500 \
+  1789430500
+cache_observed_case "Plateau carries observed_at forward" \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":1789448400}}}' \
+  1789430400 \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":1789448400}}}' \
+  1789430500 \
+  1789430400
 # The writer's digit fence sits at MAX_SAFE_DIGITS: the widest passing value
 # is written raw, one column more is not.
 cache_write_case "Fifteen-digit reset is cached" \

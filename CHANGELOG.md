@@ -2,8 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- The rate-limit cache now carries `observed_at`: the epoch second of the last
+  write in which an effective percentage actually changed. It is stamped only
+  on movement, so a genuine plateau keeps its old stamp and a consumer can
+  tell a fresh reading from a re-stamped one. `written_at` keeps its meaning
+  of "this file was last touched". A schema-1 file has no `observed_at` to
+  carry forward, so the first schema-2 write stamps the current clock once.
+
 ### Changed
 
+- The rate-limit cache `schema` field is now `2`, for the added `observed_at`.
+  Consumers reading named keys are unaffected.
 - README now opens with a demo screenshot (`docs/img/demo.png`) and drops the
   text render examples it duplicated; the sample model name is current.
 
@@ -18,6 +29,13 @@
 
 ### Fixed
 
+- Concurrent sessions no longer clobber the rate-limit cache with stale
+  percentages. An idle session's hours-old reading shares the live reset
+  epoch, so the old non-regressing-reset guard admitted it. The window guard
+  is now reset-keyed: a newer reset takes the incoming pair whole, an equal
+  reset keeps the higher percentage (usage inside one window only accrues),
+  and an older reset never replaces the cached pair. Every writer applies the
+  same rule, so the unlocked write race converges on the freshest reading.
 - Clock values now normalize to plain epoch integers before any arithmetic:
   the debug clock (`URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW`), the rate-limit
   reset epochs, the update-check `last_check` state, and the update-lock

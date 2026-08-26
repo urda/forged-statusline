@@ -235,8 +235,9 @@ All files use this public schema:
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "written_at": 1789430400,
+  "observed_at": 1789430400,
   "rate_5h_pct": 32.5,
   "rate_5h_reset": 1789448400,
   "rate_7d_pct": 9.999999999999998,
@@ -244,10 +245,14 @@ All files use this public schema:
 }
 ```
 
-Percentages remain unfloored. Reset values are floored epoch seconds, and
-`written_at` is the render's epoch second. Absent windows are omitted. A window
-is updated only from a complete percentage and reset pair whose reset is not
-older than the cached value. If neither window is complete, no file is written.
+Percentages remain unfloored, and reset values are floored epoch seconds.
+`written_at` is the epoch second of the last write, even a write that changed
+nothing. `observed_at` moves only when an effective percentage changes, so a
+long-idle value reads as stale. Absent windows are omitted. A window is
+updated only from a complete percentage and reset pair: a newer reset takes
+the incoming pair whole, an equal reset keeps the higher percentage, and an
+older reset never replaces the cached pair. If neither window is complete, no
+file is written.
 
 An existing file whose leading JSON object yields no complete pair of sane
 numbers is treated as absent; `schema` and `written_at` are not consulted.
