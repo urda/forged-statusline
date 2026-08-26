@@ -1,0 +1,61 @@
+name: Release Gate
+
+
+# Runs only on a PR into release, and attaches its result to the master head
+# SHA. The release branch ruleset requires this check, so a direct
+# `git push origin master:release` succeeds only for a SHA that passed the
+# gate through an open release PR.
+on:
+  pull_request:
+    branches:
+      - release
+
+
+permissions:
+  contents: read
+
+
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v7
+        with:
+          lfs: false
+          persist-credentials: false
+
+      - name: 🔢 Version check
+        run: make version-check
+
+      - name: 🔺 Assert VERSION is bumped past release
+        run: |
+          current="$(cat VERSION)"
+          git fetch --no-tags --depth 1 origin release
+          released="$(git show FETCH_HEAD:VERSION)"
+          if [[ "${current}" == "${released}" ]]; then
+            echo "VERSION is still ${released}: bump it before releasing" >&2
+            exit 1
+          fi
+          highest="$(printf '%s\n%s\n' "${released}" "${current}" | sort -V | tail -1)"
+          if [[ "${highest}" != "${current}" ]]; then
+            echo "VERSION ${current} is not above released ${released}" >&2
+            exit 1
+          fi
+          echo "releasing ${released} -> ${current}"
+
+      - name: 📜 Assert CHANGELOG targets this release
+        run: |
+          current="$(cat VERSION)"
+          escaped="${current//./\\.}"
+          if ! grep -Eq "^## \[${escaped}\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md; then
+            echo "CHANGELOG.md has no dated '## [${current}]' heading" >&2
+            exit 1
+          fi
+          if ! grep -Eq "^\[${escaped}\]: " CHANGELOG.md; then
+            echo "CHANGELOG.md has no '[${current}]:' link reference" >&2
+            exit 1
+          fi
