@@ -17,6 +17,7 @@ SHELLCHECK := shellcheck
 
 INSTALL_SCRIPT := ./install.sh
 INSTALL_TEST_SCRIPT := ./scripts/test-install.sh
+RELEASE_GATE_SCRIPT := ./scripts/release-gate.sh
 STATUSLINE_LOCAL := ./urda-com-forged-statusline.sh
 STATUSLINE_TEST_SCRIPT := ./scripts/test-urda-com-forged-statusline.sh
 
@@ -35,7 +36,12 @@ help: # Show this help screen
 
 .PHONY: lint
 lint: # Run shellcheck.
-	${SHELLCHECK} "${STATUSLINE_LOCAL}" "${STATUSLINE_TEST_SCRIPT}" "${INSTALL_SCRIPT}" "${INSTALL_TEST_SCRIPT}"
+	${SHELLCHECK} "${STATUSLINE_LOCAL}" "${STATUSLINE_TEST_SCRIPT}" "${INSTALL_SCRIPT}" "${INSTALL_TEST_SCRIPT}" "${RELEASE_GATE_SCRIPT}"
+
+# Deliberately outside `test`: this fails on any day that is not a release day.
+.PHONY: release-gate
+release-gate: # Check this tree is ready to merge into release.
+	${RELEASE_GATE_SCRIPT}
 
 .PHONY: test
 test: version-check test-statusline test-install # Run every test suite, as CI's test job does. Lint runs separately.
