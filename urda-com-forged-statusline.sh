@@ -15,7 +15,7 @@
 # No `set -e`: a non-zero exit or empty stdout blanks the status line.
 #
 # Self-overridable so tests can compare cached and local versions.
-URDA_AI_FORGED_STATUS_LINE_VERSION="${URDA_AI_FORGED_STATUS_LINE_VERSION:-1.0.2}"
+URDA_AI_FORGED_STATUS_LINE_VERSION="${URDA_AI_FORGED_STATUS_LINE_VERSION:-1.0.3}"
 
 # --- manual self-update (user-invoked) --------------------------------------
 update_self() {
