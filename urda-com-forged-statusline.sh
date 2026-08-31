@@ -153,6 +153,14 @@ JSON_EXACT_CEILING=9007199254740992
 # up, so 15 digits is the widest run that is always safe in both.
 MAX_SAFE_DIGITS=15
 
+# A provider reset can sit at most one window length ahead of the clock, plus
+# an hour of slack for clock skew and provider rounding. Anything further is
+# not a reset: it would out-rank every real reset in pick_cache_window and
+# wedge the cache until a hand delete.
+WINDOW_5H_SECS=18000
+WINDOW_7D_SECS=604800
+CACHE_RESET_SLACK=3600
+
 CTX_FULL_WINDOW=1000000
 
 UPDATE_CHECK_ON=1
@@ -208,6 +216,20 @@ sanitize_cache_pair() {
   local __pct_re="^[0-9]{1,${MAX_SAFE_DIGITS}}(\.[0-9]+)?\$"
   [[ "${__pv}" =~ ${__pct_re} ]] || printf -v "${__p}" '%s' ""
   if ! is_integer "${__rv}" || (( ${#__rv} > MAX_SAFE_DIGITS )); then
+    printf -v "${__r}" '%s' ""
+  fi
+}
+
+bound_cache_pair() {
+  #   bound_cache_pair <pct_var> <reset_var> <window_secs>
+  # Blank a pair whose reset sits further ahead than its window can reach.
+  # A dead clock (NOW empty or 0) skips the bound: better an unbounded write
+  # than a cache frozen by a broken local clock.
+  local __p="${1}" __r="${2}" __w="${3}" __rv="${!2}"
+  [[ -n "${__rv}" ]] || return 0
+  (( ${NOW:-0} > 0 )) || return 0
+  if (( __rv > ${NOW:-0} + __w + CACHE_RESET_SLACK )); then
+    printf -v "${__p}" '%s' ""
     printf -v "${__r}" '%s' ""
   fi
 }
@@ -436,6 +458,7 @@ write_cache() {
   local dir file cached
   local new_5h_pct new_5h_reset new_7d_pct new_7d_reset
   local cur_5h_pct cur_5h_reset cur_7d_pct cur_7d_reset cur_observed
+  local disk_5h_reset disk_7d_reset
   local eff_5h_pct eff_5h_reset eff_7d_pct eff_7d_reset observed
 
   # Global for the child EXIT trap.
@@ -451,6 +474,8 @@ write_cache() {
 
   sanitize_cache_pair new_5h_pct new_5h_reset
   sanitize_cache_pair new_7d_pct new_7d_reset
+  bound_cache_pair new_5h_pct new_5h_reset "${WINDOW_5H_SECS}"
+  bound_cache_pair new_7d_pct new_7d_reset "${WINDOW_7D_SECS}"
 
   # Agy caches per quota pool: one shared slot would flip meaning with the
   # active model family.
@@ -494,6 +519,15 @@ write_cache() {
     return
   fi
 
+  # Judge the read-back pairs by the same future bound, keeping the as-read
+  # resets for the discard decisions below. A wedged cache heals here: a
+  # far-future cached reset drops before the compare, so the next real pair
+  # replaces it instead of losing to it.
+  disk_5h_reset="${cur_5h_reset}"
+  disk_7d_reset="${cur_7d_reset}"
+  bound_cache_pair cur_5h_pct cur_5h_reset "${WINDOW_5H_SECS}"
+  bound_cache_pair cur_7d_pct cur_7d_reset "${WINDOW_7D_SECS}"
+
   # Concurrent writers all apply the same reset-keyed max() rule, so the
   # unlocked race converges on the freshest reading instead of the last writer.
   pick_cache_window eff_5h_pct eff_5h_reset \
@@ -510,8 +544,10 @@ write_cache() {
   fi
 
   if [[ -z "${eff_5h_reset}" && -z "${eff_7d_reset}" ]]; then
-    # Nothing to write, so drop a file that no longer reads back at all.
-    if [[ -f "${file}" && -z "${cur_5h_reset}${cur_7d_reset}" ]]; then
+    # Nothing to write, so drop a file that no longer reads back at all. The
+    # as-read resets judge this: a bound-blanked pair still reads back, so
+    # the file stays for the next full pair to heal instead of vanishing.
+    if [[ -f "${file}" && -z "${disk_5h_reset}${disk_7d_reset}" ]]; then
       rm -f "${file}"
     fi
     return

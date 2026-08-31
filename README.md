@@ -251,8 +251,10 @@ nothing. `observed_at` moves only when an effective percentage changes, so a
 long-idle value reads as stale. Absent windows are omitted. A window is
 updated only from a complete percentage and reset pair: a newer reset takes
 the incoming pair whole, an equal reset keeps the higher percentage, and an
-older reset never replaces the cached pair. If neither window is complete, no
-file is written.
+older reset never replaces the cached pair. A reset further ahead of the
+clock than its own window can reach (plus an hour of skew slack) is treated
+as absent, on write and on read back, so a corrupt far-future reset cannot
+pin the file. If neither window is complete, no file is written.
 
 An existing file whose leading JSON object yields no complete pair of sane
 numbers is treated as absent; `schema` and `written_at` are not consulted.

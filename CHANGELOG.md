@@ -1,5 +1,35 @@
 # Urda's Forged Status Line CHANGELOG
 
+## [Unreleased]
+
+### Fixed
+
+- The rate-limit cache writer now bounds every reset against the clock: a
+  five-hour reset may sit at most 6 hours ahead, a seven-day reset at most
+  7 days and 1 hour ahead (one window length plus an hour of skew slack). A
+  plausible far-future reset used to out-rank every real reset in the
+  monotonic guard and wedge the window until the user deleted the cache file
+  by hand. The bound applies to incoming and cached pairs alike, so an
+  already wedged cache heals on the next valid write, and normal provider
+  ordering protection is unchanged. A dead clock skips the bound rather than
+  freezing the cache.
+
+## [1.0.3] - 2026-08-30
+
+### Added
+
+- The release gate now lives in `scripts/release-gate.sh`. `make release-gate`
+  runs it by hand, and the Release Gate workflow calls the same target. One
+  copy of the checks serves CI and the local tree, and `make lint` covers the
+  script. The target stays outside `make test`, because the gate fails on any
+  day that is not a release day.
+- Three new gate checks. A pushed `vX.Y.Z` tag must point into the current
+  history, so a spent version number cannot ship on a second commit. The
+  CHANGELOG section for the version must carry real `- ` notes, so a bare
+  heading cannot pass. The `[X.Y.Z]:` link reference must end in
+  `/releases/tag/vX.Y.Z`, so a line copied from the release above cannot keep
+  a stale target.
+
 ## [1.0.2] - 2026-08-26
 
 ### Added
@@ -90,6 +120,7 @@ First public release of Urda's Forged Status Line (`FSL`, `fsl`).
   favor of a normal render.
 - Bash 3.2 and `jq` 1.6 minimums, both asserted by CI rather than assumed.
 
+[1.0.3]: https://github.com/urda/forged-statusline/releases/tag/v1.0.3
 [1.0.2]: https://github.com/urda/forged-statusline/releases/tag/v1.0.2
 [1.0.1]: https://github.com/urda/forged-statusline/releases/tag/v1.0.1
 [1.0.0]: https://github.com/urda/forged-statusline/releases/tag/v1.0.0

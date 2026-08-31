@@ -409,17 +409,21 @@ cache_write_case() {
 }
 
 cache_nowrite_case() {
-  #   cache_nowrite_case <label> <gate> <json>
-  local label="${1}" gate="${2}" json="${3//__HOME__/${HOME}}"
+  #   cache_nowrite_case <label> <gate> <json> [now]
+  # An empty now leaves the real clock in charge; the renderer reads an empty
+  # DEBUG_NOW as unset, so the pin passes through unconditionally.
+  local label="${1}" gate="${2}" json="${3//__HOME__/${HOME}}" now="${4:-}"
   local jail failed="false" reason=""
   jail="$(mktemp -d)"
   if [[ -n "${gate}" ]]; then
     render_settled "${json}" \
       URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE="${gate}" \
-      URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE_DIR="${jail}"
+      URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE_DIR="${jail}" \
+      URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW="${now}"
   else
     render_settled "${json}" \
-      URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE_DIR="${jail}"
+      URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE_DIR="${jail}" \
+      URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW="${now}"
   fi
   if [[ -n "$(ls -A "${jail}" 2>/dev/null)" ]]; then
     failed="true"
@@ -465,16 +469,19 @@ cache_monotonic_case() {
 }
 
 cache_second_case() {
-  #   cache_second_case <label> <json1> <json2> <filter> <expect>
+  #   cache_second_case <label> <json1> <json2> <filter> <expect> [now1] [now2]
   # Render twice into one jail and judge the surviving cache with a jq filter.
+  # The clocks default to one shared pin; a rollover case advances the second
+  # so its later reset stays inside the writer's future bound.
   local label="${1}" json1="${2}" json2="${3}" filter="${4}" expect="${5}"
+  local now1="${6:-1789430400}" now2="${7:-1789430400}"
   local jail file failed="false" reason="" got
   jail="$(mktemp -d)"
   file="${jail}/cache-claude.json"
   render_settled "${json1}" \
-    URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE=1 URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE_DIR="${jail}" URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW=1789430400
+    URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE=1 URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE_DIR="${jail}" URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW="${now1}"
   render_settled "${json2}" \
-    URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE=1 URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE_DIR="${jail}" URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW=1789430400
+    URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE=1 URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE_DIR="${jail}" URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW="${now2}"
   got="$(jq -r "${filter}" "${file}" 2>/dev/null)" || got="<jq-error>"
   if [[ "${got}" != "${expect}" ]]; then
     failed="true"
@@ -538,11 +545,11 @@ agy_pool_case() {
   local g_pct g_reset p_pct p_reset
   jail="$(mktemp -d)"
   render_settled '{"product":"antigravity","model":{"display_name":"Gemini 3.1 Pro"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"quota":{"gemini-5h":{"remaining_fraction":0.5,"reset_time":"2026-07-14T06:00:00Z"}}}' \
-    URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE=1 URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE_DIR="${jail}" URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW=1700000000
+    URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE=1 URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE_DIR="${jail}" URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW=1784000000
   render_settled '{"product":"antigravity","model":{"display_name":"Claude Opus 4.6"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"quota":{"3p-5h":{"remaining_fraction":0.75,"reset_time":"2026-07-14T07:00:00Z"}}}' \
-    URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE=1 URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE_DIR="${jail}" URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW=1700000000
+    URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE=1 URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE_DIR="${jail}" URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW=1784000000
   render_settled '{"product":"antigravity","model":{"display_name":"Gemini 3.1 Pro"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"quota":{"gemini-5h":{"remaining_fraction":0.25,"reset_time":"2026-07-14T06:00:00Z"}}}' \
-    URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE=1 URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE_DIR="${jail}" URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW=1700000000
+    URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE=1 URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE_DIR="${jail}" URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW=1784000000
 
   g_pct="$(jq -r '.rate_5h_pct' "${jail}/cache-agy-gemini.json" 2>/dev/null)" || g_pct="<jq-error>"
   g_reset="$(jq -r '.rate_5h_reset' "${jail}/cache-agy-gemini.json" 2>/dev/null)" || g_reset="<jq-error>"
@@ -2200,9 +2207,9 @@ cache_write_case "Claude cache schema" \
   '.rate_7d_pct=9.5' '.rate_7d_reset=1789887600'
 agy_pool_case "Agy pools cache independently across a model switch"
 cache_write_case "Agy cache normalization" \
-  1700000000 cache-agy-3p.json \
+  1783980000 cache-agy-3p.json \
   '{"product":"antigravity","model":{"display_name":"Claude Sonnet 4.6"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":20},"quota":{"3p-5h":{"remaining_fraction":0.5,"reset_time":"2026-07-14T00:00:00Z"},"3p-weekly":{"remaining_fraction":0.75,"reset_time":"2026-07-20T00:00:00Z"}}}' \
-  '.schema=2' '.written_at=1700000000' '.observed_at=1700000000' \
+  '.schema=2' '.written_at=1783980000' '.observed_at=1783980000' \
   '.rate_5h_pct=50' '.rate_5h_reset=1783987200' \
   '.rate_7d_pct=25' '.rate_7d_reset=1784505600'
 cache_write_case "Partial cache omits absent window" \
@@ -2234,10 +2241,12 @@ cache_second_case "Equal 7d reset keeps the higher percentage" \
   '.rate_7d_pct' '23'
 # A rollover legitimately lowers the percentage: a newer reset takes the
 # incoming pair whole, so a naive max() must not pin the pre-rollover value.
+# The second clock sits past the first reset, as a real rollover render does.
 cache_second_case "Newer 5h reset takes the lower percentage" \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":88,"resets_at":1789448400}}}' \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":3,"resets_at":1789466400}}}' \
-  '.rate_5h_pct' '3'
+  '.rate_5h_pct' '3' \
+  1789430400 1789450000
 # Fractional percentages cannot go through Bash arithmetic; the equal-reset
 # compare must still order them numerically.
 cache_second_case "Equal reset compares fractional percentages" \
@@ -2258,15 +2267,65 @@ cache_observed_case "Plateau carries observed_at forward" \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":1789448400}}}' \
   1789430500 \
   1789430400
-# The writer's digit fence sits at MAX_SAFE_DIGITS: the widest passing value
-# is written raw, one column more is not.
-cache_write_case "Fifteen-digit reset is cached" \
-  1789430400 cache-claude.json \
+# The future bound now rejects every reset past its window's horizon, so the
+# writer's MAX_SAFE_DIGITS fence has no reachable passing reset any more. The
+# widest formerly passing value must land on the same rejection.
+cache_nowrite_case "Fifteen-digit reset is rejected as far future" \
+  1 \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":999999999999999}}}' \
-  '.rate_5h_pct=40' '.rate_5h_reset=999999999999999'
+  1789430400
 cache_nowrite_case "Sixteen-digit reset is not cached" \
   1 \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":1000000000000000}}}'
+# ENGR-201: a plausible far-future reset must not enter the cache. It would
+# out-rank every real reset in the monotonic guard and wedge the window until
+# a hand delete. The bound is NOW + window + one hour of slack per window.
+cache_nowrite_case "Far-future 5h reset is not cached" \
+  1 \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":1820966400}}}' \
+  1789430400
+cache_nowrite_case "Far-future 7d reset is not cached" \
+  1 \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":20},"rate_limits":{"seven_day":{"used_percentage":10,"resets_at":1820966400}}}' \
+  1789430400
+cache_write_case "5h reset at the future bound is cached" \
+  1789430400 cache-claude.json \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":1789452000}}}' \
+  '.rate_5h_pct=40' '.rate_5h_reset=1789452000'
+cache_nowrite_case "5h reset one past the future bound is not cached" \
+  1 \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":1789452001}}}' \
+  1789430400
+cache_write_case "7d reset at the future bound is cached" \
+  1789430400 cache-claude.json \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":20},"rate_limits":{"seven_day":{"used_percentage":10,"resets_at":1790038800}}}' \
+  '.rate_7d_pct=10' '.rate_7d_reset=1790038800'
+cache_nowrite_case "7d reset one past the future bound is not cached" \
+  1 \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":20},"rate_limits":{"seven_day":{"used_percentage":10,"resets_at":1790038801}}}' \
+  1789430400
+# A wedged cache must heal on the next real pair: the seeded far-future reset
+# would out-rank the fresh one under the old guard, so this is the regression.
+cache_seeded_reader_case "Valid 5h reset replaces a seeded far-future reset" \
+  '{"schema":2,"written_at":1789430300,"observed_at":1789430300,"rate_5h_pct":40,"rate_5h_reset":4102444800}' \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":55,"resets_at":1789448400}}}' \
+  '.rate_5h_reset' '1789448400'
+cache_seeded_reader_case "Valid 7d reset replaces a seeded far-future reset" \
+  '{"schema":2,"written_at":1789430300,"observed_at":1789430300,"rate_7d_pct":10,"rate_7d_reset":4102444800}' \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":20},"rate_limits":{"seven_day":{"used_percentage":12,"resets_at":1789887600}}}' \
+  '.rate_7d_reset' '1789887600'
+# A bad window must not drag down its healthy sibling in the same render.
+cache_write_case "Far-future 5h does not block a valid 7d" \
+  1789430400 cache-claude.json \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":1820966400},"seven_day":{"used_percentage":10,"resets_at":1789887600}}}' \
+  '.rate_7d_pct=10' '.rate_7d_reset=1789887600' \
+  'has("rate_5h_pct")=false' 'has("rate_5h_reset")=false'
+# A dead clock (NOW 0) skips the future bound by design: an unbounded write
+# beats a cache frozen by a broken local clock.
+cache_write_case "Dead clock skips the future bound" \
+  0 cache-claude.json \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":4102444800}}}' \
+  '.written_at=0' '.rate_5h_pct=40' '.rate_5h_reset=4102444800'
 cache_nowrite_case "Exact 2^53 percentage is not cached" \
   1 \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":9007199254740992,"resets_at":1789448400}}}'
@@ -2341,7 +2400,7 @@ cache_selfheal_case "Corrupt cache replaced: negative reset" \
 # The leading reset is newer than the incoming one and the trailing reset is
 # older, so only reading the first can reject the update and keep pct 10.
 cache_normalize_case "Concatenated documents: only the first is read" \
-  '{"rate_5h_pct":10,"rate_5h_reset":1789500000}{"rate_5h_pct":11,"rate_5h_reset":1700000000}' \
+  '{"rate_5h_pct":10,"rate_5h_reset":1789450000}{"rate_5h_pct":11,"rate_5h_reset":1700000000}' \
   '.rate_5h_pct' '10'
 # A fractional reset must never reach the Bash comparisons.
 cache_normalize_case "Fractional cached reset is floored, not carried through" \
