@@ -27,6 +27,13 @@
   already wedged cache heals on the next valid write, and normal provider
   ordering protection is unchanged. A dead clock skips the bound rather than
   freezing the cache.
+- The test suite no longer writes to the real rate-limit cache directory. One
+  update-check case enabled cache writing without its own jail, so the writer
+  resolved the maintainer's real state directory, and its no-incoming-data
+  branch deleted any cache file it read as empty or corrupt. The suite now
+  exports a throwaway `WRITE_CACHE_DIR` for every case, so a case that forgets
+  its own jail can no longer reach live data. Test-only change; the renderer is
+  untouched.
 
 ## [1.0.2] - 2026-08-26
 

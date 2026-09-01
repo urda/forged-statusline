@@ -1504,6 +1504,12 @@ unset _var
 # Dedicated cases re-enable updates against private fixtures.
 export URDA_AI_FORGED_STATUS_LINE_UPDATE_CHECK=0
 
+# Backstop the per-case jails: a render that enables cache writing without one
+# resolves the real state dir, where the no-incoming-data branch deletes the
+# user's cache file. Cases that set their own jail still override this.
+FSL_CACHE_JAIL="$(mktemp -d)"
+export URDA_AI_FORGED_STATUS_LINE_WRITE_CACHE_DIR="${FSL_CACHE_JAIL}"
+
 section "Percentage thresholds"
 run_case "Zero usage (calm, empty bar)" '0%' \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/dev/urda/forged-statusline"},"context_window":{"used_percentage":0}}'
@@ -2657,6 +2663,8 @@ flag_case "flags: bare -- still renders two rows" \
   -- 'Opus' 2
 
 # --- summary ----------------------------------------------------------------
+
+remove_jail "${FSL_CACHE_JAIL}"
 
 TOTAL=$(( PASS_COUNT + FAIL_COUNT ))
 printf "\n%d passed, %d failed of %d.\n" "${PASS_COUNT}" "${FAIL_COUNT}" "${TOTAL}"
