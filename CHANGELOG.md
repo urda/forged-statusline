@@ -1,20 +1,6 @@
 # Urda's Forged Status Line CHANGELOG
 
-## [Unreleased]
-
-### Fixed
-
-- The rate-limit cache writer now bounds every reset against the clock: a
-  five-hour reset may sit at most 6 hours ahead, a seven-day reset at most
-  7 days and 1 hour ahead (one window length plus an hour of skew slack). A
-  plausible far-future reset used to out-rank every real reset in the
-  monotonic guard and wedge the window until the user deleted the cache file
-  by hand. The bound applies to incoming and cached pairs alike, so an
-  already wedged cache heals on the next valid write, and normal provider
-  ordering protection is unchanged. A dead clock skips the bound rather than
-  freezing the cache.
-
-## [1.0.3] - 2026-08-30
+## [1.0.3] - Unreleased
 
 ### Added
 
@@ -29,6 +15,18 @@
   heading cannot pass. The `[X.Y.Z]:` link reference must end in
   `/releases/tag/vX.Y.Z`, so a line copied from the release above cannot keep
   a stale target.
+
+### Fixed
+
+- The rate-limit cache writer now bounds every reset against the clock: a
+  five-hour reset may sit at most 6 hours ahead, a seven-day reset at most
+  7 days and 1 hour ahead (one window length plus an hour of skew slack). A
+  plausible far-future reset used to out-rank every real reset in the
+  monotonic guard and wedge the window until the user deleted the cache file
+  by hand. The bound applies to incoming and cached pairs alike, so an
+  already wedged cache heals on the next valid write, and normal provider
+  ordering protection is unchanged. A dead clock skips the bound rather than
+  freezing the cache.
 
 ## [1.0.2] - 2026-08-26
 
