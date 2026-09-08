@@ -16,8 +16,28 @@
   `/releases/tag/vX.Y.Z`, so a line copied from the release above cannot keep
   a stale target.
 
+### Changed
+
+- The rate-limit cache `schema` field is now `3`. Each window may carry a
+  read stamp, `rate_5h_read` and `rate_7d_read`: the epoch second of the API
+  reply that produced its percentage and reset. The renderer recovers it from
+  the Claude Code payload's `prompt_cache.expires_at` minus the cache TTL.
+  Antigravity has no source for one, so an agy cache never carries a stamp.
+  Consumers reading named keys are unaffected.
+
 ### Fixed
 
+- Concurrent Claude Code sessions can no longer pin a stale rate-limit
+  percentage. The 1.0.2 rule kept the higher percentage on an equal reset, on
+  the assumption that usage inside one window only accrues. The provider can
+  also lower a percentage, and on 2026-09-04 an idle session replayed a
+  frozen 29% weekly reading that beat the live 3% on every write until the
+  reset. On an equal reset the newer read stamp now wins in either direction,
+  a tie takes the incoming pair, and an unstamped replay never displaces a
+  stamped pair. Unstamped pairs on both sides keep the higher-percentage
+  rule, so agy behaves as before. A stamp ahead of the clock by more than an
+  hour, or older than a week and an hour, is dropped, and a schema-2 file
+  heals on its first stamped write.
 - The rate-limit cache writer now bounds every reset against the clock: a
   five-hour reset may sit at most 6 hours ahead, a seven-day reset at most
   7 days and 1 hour ahead (one window length plus an hour of skew slack). A

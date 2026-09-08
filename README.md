@@ -235,26 +235,40 @@ All files use this public schema:
 
 ```json
 {
-  "schema": 2,
+  "schema": 3,
   "written_at": 1789430400,
   "observed_at": 1789430400,
   "rate_5h_pct": 32.5,
   "rate_5h_reset": 1789448400,
+  "rate_5h_read": 1789430000,
   "rate_7d_pct": 9.999999999999998,
-  "rate_7d_reset": 1789887600
+  "rate_7d_reset": 1789887600,
+  "rate_7d_read": 1789430000
 }
 ```
 
 Percentages remain unfloored, and reset values are floored epoch seconds.
 `written_at` is the epoch second of the last write, even a write that changed
 nothing. `observed_at` moves only when an effective percentage changes, so a
-long-idle value reads as stale. Absent windows are omitted. A window is
-updated only from a complete percentage and reset pair: a newer reset takes
-the incoming pair whole, an equal reset keeps the higher percentage, and an
-older reset never replaces the cached pair. A reset further ahead of the
-clock than its own window can reach (plus an hour of skew slack) is treated
-as absent, on write and on read back, so a corrupt far-future reset cannot
-pin the file. If neither window is complete, no file is written.
+long-idle value reads as stale. `rate_5h_read` and `rate_7d_read` are the
+epoch second of the API reply that produced that window's numbers. Claude
+Code exposes no rate-limit timestamp, so the renderer recovers the reply time
+from `prompt_cache.expires_at` minus the cache TTL, which Claude Code sets
+once per reply and leaves frozen while a session idles. Agy has no such
+field, so an agy cache never carries a read stamp. Absent windows and absent
+stamps are omitted.
+
+A window is updated only from a complete percentage and reset pair. A newer
+reset takes the incoming pair whole, and an older reset never replaces the
+cached pair. On an equal reset the read stamps decide: the newer stamp wins in
+either direction, a tie takes the incoming pair, and an unstamped pair never
+displaces a stamped one. When neither side carries a stamp, the higher
+percentage wins, as it did in schema 2. A stamp ahead of the clock by more
+than an hour, or older than a week and an hour, is treated as absent. A reset
+further ahead of the clock than its own window can reach (plus an hour of
+skew slack) is treated as absent, on write and on read back, so a corrupt
+far-future reset cannot pin the file. If neither window is complete, no file
+is written.
 
 An existing file whose leading JSON object yields no complete pair of sane
 numbers is treated as absent; `schema` and `written_at` are not consulted.
@@ -287,6 +301,7 @@ make test-statusline          # PASS/FAIL lines and summary
 make test-statusline-verbose  # full visual catalog
 make test-install             # installer atomicity and validation
 make version-check            # compare VERSION with the renderer
+make release-gate             # release-day checks; fails on any other day
 ```
 
 The renderer suite pins `URDA_AI_FORGED_STATUS_LINE_DEBUG_NOW` so countdowns
