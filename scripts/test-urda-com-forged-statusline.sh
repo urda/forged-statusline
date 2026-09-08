@@ -2208,14 +2208,14 @@ section "Rate-limit cache"
 cache_write_case "Claude cache schema" \
   1789430400 cache-claude.json \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":28},"rate_limits":{"five_hour":{"used_percentage":32.5,"resets_at":1789448400},"seven_day":{"used_percentage":9.5,"resets_at":1789887600}}}' \
-  '.schema=2' '.written_at=1789430400' '.observed_at=1789430400' \
+  '.schema=3' '.written_at=1789430400' '.observed_at=1789430400' \
   '.rate_5h_pct=32.5' '.rate_5h_reset=1789448400' \
   '.rate_7d_pct=9.5' '.rate_7d_reset=1789887600'
 agy_pool_case "Agy pools cache independently across a model switch"
 cache_write_case "Agy cache normalization" \
   1783980000 cache-agy-3p.json \
   '{"product":"antigravity","model":{"display_name":"Claude Sonnet 4.6"},"workspace":{"current_dir":"__HOME__/x"},"context_window":{"used_percentage":20},"quota":{"3p-5h":{"remaining_fraction":0.5,"reset_time":"2026-07-14T00:00:00Z"},"3p-weekly":{"remaining_fraction":0.75,"reset_time":"2026-07-20T00:00:00Z"}}}' \
-  '.schema=2' '.written_at=1783980000' '.observed_at=1783980000' \
+  '.schema=3' '.written_at=1783980000' '.observed_at=1783980000' \
   '.rate_5h_pct=50' '.rate_5h_reset=1783987200' \
   '.rate_7d_pct=25' '.rate_7d_reset=1784505600'
 cache_write_case "Partial cache omits absent window" \
@@ -2234,14 +2234,15 @@ cache_second_case "Equal 7d reset still updates the percentage" \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"seven_day":{"used_percentage":10,"resets_at":1789887600}}}' \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"seven_day":{"used_percentage":55,"resets_at":1789887600}}}' \
   '.rate_7d_pct' '55'
-# An idle session replays an hours-old snapshot under the same reset epoch.
-# Usage inside one window only accrues, so the higher percentage is fresher
-# and must survive the equal-reset write.
-cache_second_case "Equal 5h reset keeps the higher percentage" \
+# With no read stamp on either side (no prompt_cache block, as on agy) the
+# equal-reset compare falls back to the percentage: an idle replay of a lower
+# value must not displace the higher, fresher one. The stamped rule that
+# supersedes this on Claude has its own section below.
+cache_second_case "Equal 5h reset keeps the higher percentage (unstamped)" \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":1789448400}}}' \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":8,"resets_at":1789448400}}}' \
   '.rate_5h_pct' '40'
-cache_second_case "Equal 7d reset keeps the higher percentage" \
+cache_second_case "Equal 7d reset keeps the higher percentage (unstamped)" \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"seven_day":{"used_percentage":23,"resets_at":1789887600}}}' \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"seven_day":{"used_percentage":21,"resets_at":1789887600}}}' \
   '.rate_7d_pct' '23'
@@ -2259,6 +2260,85 @@ cache_second_case "Equal reset compares fractional percentages" \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":3.9,"resets_at":1789448400}}}' \
   '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":3.7,"resets_at":1789448400}}}' \
   '.rate_5h_pct' '3.9'
+# --- read stamps ------------------------------------------------------------
+# The percentage cannot say which of two same-reset readings is newer: usage
+# usually accrues inside a window, but the provider lowered the weekly figure
+# on 2026-09-04 and the higher-wins rule pinned the stale 29% until reset.
+# Claude Code sets prompt_cache.expires_at once per API reply (reply time plus
+# the cache TTL), and that reply also carries the rate-limit headers, so
+# expires_at minus the TTL is the age of the numbers. On an equal reset the
+# newer stamp wins in either direction.
+cache_write_case "Read stamp is written per window from prompt_cache" \
+  1789430400 cache-claude.json \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":6,"resets_at":1789448400},"seven_day":{"used_percentage":3,"resets_at":1789887600}},"prompt_cache":{"ttl":"1h","expires_at":1789433600}}' \
+  '.schema=3' '.rate_5h_read=1789430000' '.rate_7d_read=1789430000'
+cache_write_case "A 5m TTL recovers the same reply time" \
+  1789430400 cache-claude.json \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":6,"resets_at":1789448400},"seven_day":{"used_percentage":3,"resets_at":1789887600}},"prompt_cache":{"ttl":"5m","expires_at":1789430300}}' \
+  '.rate_7d_read=1789430000'
+cache_write_case "An unknown TTL yields no read stamp" \
+  1789430400 cache-claude.json \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":6,"resets_at":1789448400},"seven_day":{"used_percentage":3,"resets_at":1789887600}},"prompt_cache":{"ttl":"2h","expires_at":1789430300}}' \
+  '.rate_7d_pct=3' 'has("rate_7d_read")=false'
+cache_write_case "A null expires_at yields no read stamp" \
+  1789430400 cache-claude.json \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"seven_day":{"used_percentage":3,"resets_at":1789887600}},"prompt_cache":{"ttl":"1h","expires_at":null}}' \
+  '.rate_7d_pct=3' 'has("rate_7d_read")=false'
+# 2026-09-04: a wrong high reading sits in the cache, the live session is
+# lower and newer. The newer stamp must win despite the smaller percentage.
+cache_second_case "Equal 7d reset takes the newer stamp with a lower percentage" \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":3,"resets_at":1789448400},"seven_day":{"used_percentage":29,"resets_at":1789887600}},"prompt_cache":{"ttl":"1h","expires_at":1789403600}}' \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":6,"resets_at":1789448400},"seven_day":{"used_percentage":3,"resets_at":1789887600}},"prompt_cache":{"ttl":"1h","expires_at":1789433600}}' \
+  '.rate_7d_pct' '3'
+# 2026-08-25: an idle session replays an old lower reading. Its stamp is
+# frozen, so it loses to the live reading no matter how often it renders.
+cache_second_case "Equal 5h reset keeps the newer stamp against an older lower one" \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":1789448400},"seven_day":{"used_percentage":23,"resets_at":1789887600}},"prompt_cache":{"ttl":"1h","expires_at":1789433600}}' \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":8,"resets_at":1789448400},"seven_day":{"used_percentage":21,"resets_at":1789887600}},"prompt_cache":{"ttl":"1h","expires_at":1789403600}}' \
+  '.rate_5h_pct' '40'
+cache_second_case "Equal 7d reset keeps the newer stamp against an older lower one" \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":1789448400},"seven_day":{"used_percentage":23,"resets_at":1789887600}},"prompt_cache":{"ttl":"1h","expires_at":1789433600}}' \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":8,"resets_at":1789448400},"seven_day":{"used_percentage":21,"resets_at":1789887600}},"prompt_cache":{"ttl":"1h","expires_at":1789403600}}' \
+  '.rate_7d_pct' '23'
+# Equal stamps are equally fresh: the incoming pair wins so a correction from
+# the same reply moment can never stick behind a tie.
+cache_second_case "Equal read stamps take the incoming pair" \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":1789448400},"seven_day":{"used_percentage":29,"resets_at":1789887600}},"prompt_cache":{"ttl":"1h","expires_at":1789433600}}' \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":8,"resets_at":1789448400},"seven_day":{"used_percentage":3,"resets_at":1789887600}},"prompt_cache":{"ttl":"1h","expires_at":1789433600}}' \
+  '.rate_7d_pct' '3'
+# A replay without a stamp cannot displace a stamped pair, whatever its
+# percentage, and it cannot strip the stamp from the file either.
+cache_second_case "Unstamped replay cannot displace a stamped pair" \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":6,"resets_at":1789448400},"seven_day":{"used_percentage":3,"resets_at":1789887600}},"prompt_cache":{"ttl":"1h","expires_at":1789433600}}' \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":3,"resets_at":1789448400},"seven_day":{"used_percentage":29,"resets_at":1789887600}}}' \
+  '.rate_7d_pct' '3'
+cache_second_case "Unstamped replay leaves the stamp in place" \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":6,"resets_at":1789448400},"seven_day":{"used_percentage":3,"resets_at":1789887600}},"prompt_cache":{"ttl":"1h","expires_at":1789433600}}' \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":3,"resets_at":1789448400},"seven_day":{"used_percentage":29,"resets_at":1789887600}}}' \
+  '.rate_7d_read' '1789430000'
+# A stamp the merge must not trust reads as absent: ahead of the clock by
+# more than the skew slack, or older than the widest window plus slack.
+cache_second_case "A future read stamp is ignored" \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":6,"resets_at":1789448400},"seven_day":{"used_percentage":3,"resets_at":1789887600}},"prompt_cache":{"ttl":"1h","expires_at":1789433600}}' \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":3,"resets_at":1789448400},"seven_day":{"used_percentage":29,"resets_at":1789887600}},"prompt_cache":{"ttl":"1h","expires_at":1789441200}}' \
+  '.rate_7d_pct' '3'
+cache_second_case "An ancient read stamp is ignored" \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":6,"resets_at":1789448400},"seven_day":{"used_percentage":3,"resets_at":1789887600}},"prompt_cache":{"ttl":"1h","expires_at":1789433600}}' \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":3,"resets_at":1789448400},"seven_day":{"used_percentage":29,"resets_at":1789887600}},"prompt_cache":{"ttl":"1h","expires_at":1788734000}}' \
+  '.rate_7d_pct' '3'
+# A schema-2 file carries no stamps, so the first stamped write heals a
+# pinned window instead of losing to it.
+cache_seeded_reader_case "Stamped write heals a pinned schema-2 window" \
+  '{"schema":2,"written_at":1789430300,"observed_at":1789430300,"rate_7d_pct":29,"rate_7d_reset":1789887600}' \
+  '{"model":{"display_name":"Opus"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"rate_limits":{"five_hour":{"used_percentage":6,"resets_at":1789448400},"seven_day":{"used_percentage":3,"resets_at":1789887600}},"prompt_cache":{"ttl":"1h","expires_at":1789433600}}' \
+  '.rate_7d_pct' '3'
+# The stamp is Claude-only: an agy payload carrying the same block writes no
+# stamp and keeps the percentage fallback, so the fix cannot leak onto agy.
+cache_write_case "Agy payload never gets a read stamp" \
+  1784000000 cache-agy-gemini.json \
+  '{"product":"antigravity","model":{"display_name":"Gemini 3.1 Pro"},"workspace":{"current_dir":"/x"},"context_window":{"used_percentage":20},"quota":{"gemini-5h":{"remaining_fraction":0.5,"reset_time":"2026-07-14T06:00:00Z"}},"prompt_cache":{"ttl":"1h","expires_at":1784003600}}' \
+  '.rate_5h_pct=50' 'has("rate_5h_read")=false'
+
 # observed_at moves only with an effective percentage; written_at always
 # carries the render clock.
 cache_observed_case "Movement stamps observed_at with the new clock" \

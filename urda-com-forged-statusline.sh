@@ -220,6 +220,27 @@ sanitize_cache_pair() {
   fi
 }
 
+bound_cache_read() {
+  #   bound_cache_read <read_var>
+  # Blank a read stamp the merge must not trust: not a plain epoch, ahead of
+  # the clock by more than the skew slack, or older than the widest window
+  # plus slack (no live reading can be that old inside an open window). A
+  # dead clock (NOW empty or 0) skips the range check, as bound_cache_pair
+  # does, so a broken local clock degrades to the old percentage rule
+  # instead of freezing the cache.
+  local __v="${1}" __rv="${!1}"
+  [[ -n "${__rv}" ]] || return 0
+  if ! is_integer "${__rv}" || (( ${#__rv} > MAX_SAFE_DIGITS )); then
+    printf -v "${__v}" '%s' ""
+    return 0
+  fi
+  (( ${NOW:-0} > 0 )) || return 0
+  if (( __rv > ${NOW:-0} + CACHE_RESET_SLACK )) \
+    || (( __rv < ${NOW:-0} - WINDOW_7D_SECS - CACHE_RESET_SLACK )); then
+    printf -v "${__v}" '%s' ""
+  fi
+}
+
 bound_cache_pair() {
   #   bound_cache_pair <pct_var> <reset_var> <window_secs>
   # Blank a pair whose reset sits further ahead than its window can reach.
@@ -246,37 +267,57 @@ pct_gt() {
 }
 
 pick_cache_window() {
-  #   pick_cache_window <eff_pct_var> <eff_reset_var> \
-  #                     <new_pct> <new_reset> <cur_pct> <cur_reset>
-  # Choose the surviving pair for one window.
+  #   pick_cache_window <eff_pct_var> <eff_reset_var> <eff_read_var> \
+  #                     <new_pct> <new_reset> <new_read> \
+  #                     <cur_pct> <cur_reset> <cur_read>
+  # Choose the surviving triple for one window.
   #
   # Several sessions each rewrite this file every refresh, and an idle one
-  # carries a snapshot minutes or hours old. Its pair is complete and
+  # replays a snapshot minutes or hours old. Its pair is complete and
   # non-regressing, so a reset comparison alone admits it and the fresher
-  # reading is lost. Usage inside an open window only accrues, so the larger
-  # percentage is the fresher reading. Keeping it makes concurrent writers
-  # converge, and it settles the unlocked read-modify-write race for free.
+  # reading is lost. The percentage cannot settle that: usage usually accrues
+  # inside a window, but the provider can also lower it, and a rule that
+  # keeps the larger value then pins a wrong high reading until the reset.
+  # The read stamp (CACHE_READ, the reply time recovered from the payload)
+  # is the age of the numbers themselves, so on an equal reset the newer
+  # stamp wins in either direction. An idle replay carries a frozen stamp
+  # and can never displace a live reading. Every writer applies the same
+  # rule, so the unlocked read-modify-write race still converges.
   #
-  # A newer reset still takes the incoming pair whole: a rollover resets
+  # Stamp precedence on an equal reset:
+  #   incoming stamped, cached not  -> take (a schema-2 file heals)
+  #   both stamped                  -> newer wins, a tie takes incoming
+  #   incoming not, cached stamped  -> keep (a replay cannot strip a stamp)
+  #   neither stamped               -> larger percentage, as before (agy)
+  #
+  # A newer reset still takes the incoming triple whole: a rollover resets
   # usage, so a lower percentage is correct across a window boundary.
-  local __p="${1}" __r="${2}"
-  local __np="${3}" __nr="${4}" __cp="${5}" __cr="${6}"
+  local __p="${1}" __r="${2}" __d="${3}"
+  local __np="${4}" __nr="${5}" __nd="${6}" __cp="${7}" __cr="${8}" __cd="${9}"
   local __take="false"
 
   if [[ -n "${__np}" && -n "${__nr}" ]]; then
     if [[ -z "${__cr}" ]] || (( __nr > __cr )); then
       __take="true"
-    elif (( __nr == __cr )) && pct_gt "${__np}" "${__cp}"; then
-      __take="true"
+    elif (( __nr == __cr )); then
+      if [[ -n "${__nd}" && -z "${__cd}" ]]; then
+        __take="true"
+      elif [[ -n "${__nd}" && -n "${__cd}" ]]; then
+        (( __nd >= __cd )) && __take="true"
+      elif [[ -z "${__nd}" && -z "${__cd}" ]]; then
+        pct_gt "${__np}" "${__cp}" && __take="true"
+      fi
     fi
   fi
 
   if [[ "${__take}" == "true" ]]; then
     printf -v "${__p}" '%s' "${__np}"
     printf -v "${__r}" '%s' "${__nr}"
+    printf -v "${__d}" '%s' "${__nd}"
   else
     printf -v "${__p}" '%s' "${__cp}"
     printf -v "${__r}" '%s' "${__cr}"
+    printf -v "${__d}" '%s' "${__cd}"
   fi
 }
 
@@ -456,10 +497,11 @@ rate_gauge() {
 write_cache() {
   # ${VAR:-} protects the detached child's set -u after a jq failure.
   local dir file cached
-  local new_5h_pct new_5h_reset new_7d_pct new_7d_reset
-  local cur_5h_pct cur_5h_reset cur_7d_pct cur_7d_reset cur_observed
-  local disk_5h_reset disk_7d_reset
-  local eff_5h_pct eff_5h_reset eff_7d_pct eff_7d_reset observed
+  local new_5h_pct new_5h_reset new_7d_pct new_7d_reset new_read
+  local cur_5h_pct cur_5h_reset cur_5h_read cur_7d_pct cur_7d_reset cur_7d_read
+  local cur_observed disk_5h_reset disk_7d_reset
+  local eff_5h_pct eff_5h_reset eff_5h_read eff_7d_pct eff_7d_reset eff_7d_read
+  local observed
 
   # Global for the child EXIT trap.
   TMP=""
@@ -471,11 +513,13 @@ write_cache() {
   new_5h_reset="${RESET_5H:-}"
   new_7d_pct="${CACHE_7D_PCT:-}"
   new_7d_reset="${RESET_7D:-}"
+  new_read="${CACHE_READ:-}"
 
   sanitize_cache_pair new_5h_pct new_5h_reset
   sanitize_cache_pair new_7d_pct new_7d_reset
   bound_cache_pair new_5h_pct new_5h_reset "${WINDOW_5H_SECS}"
   bound_cache_pair new_7d_pct new_7d_reset "${WINDOW_7D_SECS}"
+  bound_cache_read new_read
 
   # Agy caches per quota pool: one shared slot would flip meaning with the
   # active model family.
@@ -490,24 +534,30 @@ write_cache() {
     *) return ;;
   esac
 
-  cur_5h_pct=""; cur_5h_reset=""; cur_7d_pct=""; cur_7d_reset=""; cur_observed=""
-  # Read the cache as one object rather than five independent fields: slurping
-  # drops any trailing documents, a window counts only as a complete pair of
-  # sane numbers, and flooring the reset keeps the comparisons below inside
-  # Bash arithmetic. Anything else reads as absent and gets overwritten.
+  cur_5h_pct=""; cur_5h_reset=""; cur_5h_read=""
+  cur_7d_pct=""; cur_7d_reset=""; cur_7d_read=""; cur_observed=""
+  # Read the cache as one object rather than seven independent fields:
+  # slurping drops any trailing documents, a window counts only as a complete
+  # pair of sane numbers, its read stamp rides along when sane and reads as
+  # empty otherwise (a schema-2 file has none), and flooring the epochs keeps
+  # the comparisons below inside Bash arithmetic. Anything else reads as
+  # absent and gets overwritten.
   if [[ -f "${file}" ]]; then
     cached="$(jq -rs --argjson ceiling "${JSON_EXACT_CEILING}" '
       def sane: (type == "number") and (. >= 0) and (. < $ceiling);
-      def window($p; $r):
+      def stamp($d): if ($d | sane) then ($d | floor | tostring) else "" end;
+      def window($p; $r; $d):
         if ($p | sane) and ($r | sane)
-        then [($p | tostring), ($r | floor | tostring)]
-        else ["", ""] end;
+        then [($p | tostring), ($r | floor | tostring), stamp($d)]
+        else ["", "", ""] end;
       ((.[0] // {}) | if type == "object" then . else {} end) as $c
-      | window($c.rate_5h_pct; $c.rate_5h_reset) + window($c.rate_7d_pct; $c.rate_7d_reset)
-        + [if ($c.observed_at | sane) then ($c.observed_at | floor | tostring) else "" end]
+      | window($c.rate_5h_pct; $c.rate_5h_reset; $c.rate_5h_read)
+        + window($c.rate_7d_pct; $c.rate_7d_reset; $c.rate_7d_read)
+        + [stamp($c.observed_at)]
       | join("\u001f")
     ' "${file}" 2>/dev/null)" || cached=""
-    IFS=$'\037' read -r cur_5h_pct cur_5h_reset cur_7d_pct cur_7d_reset cur_observed <<< "${cached}"
+    IFS=$'\037' read -r cur_5h_pct cur_5h_reset cur_5h_read \
+      cur_7d_pct cur_7d_reset cur_7d_read cur_observed <<< "${cached}"
   fi
 
   # No incoming data: write nothing, but still drop a file that reads as
@@ -527,13 +577,17 @@ write_cache() {
   disk_7d_reset="${cur_7d_reset}"
   bound_cache_pair cur_5h_pct cur_5h_reset "${WINDOW_5H_SECS}"
   bound_cache_pair cur_7d_pct cur_7d_reset "${WINDOW_7D_SECS}"
+  bound_cache_read cur_5h_read
+  bound_cache_read cur_7d_read
 
-  # Concurrent writers all apply the same reset-keyed max() rule, so the
-  # unlocked race converges on the freshest reading instead of the last writer.
-  pick_cache_window eff_5h_pct eff_5h_reset \
-    "${new_5h_pct}" "${new_5h_reset}" "${cur_5h_pct}" "${cur_5h_reset}"
-  pick_cache_window eff_7d_pct eff_7d_reset \
-    "${new_7d_pct}" "${new_7d_reset}" "${cur_7d_pct}" "${cur_7d_reset}"
+  # Concurrent writers all apply the same reset-keyed, stamp-ordered rule, so
+  # the unlocked race converges on the freshest reading, not the last writer.
+  pick_cache_window eff_5h_pct eff_5h_reset eff_5h_read \
+    "${new_5h_pct}" "${new_5h_reset}" "${new_read}" \
+    "${cur_5h_pct}" "${cur_5h_reset}" "${cur_5h_read}"
+  pick_cache_window eff_7d_pct eff_7d_reset eff_7d_read \
+    "${new_7d_pct}" "${new_7d_reset}" "${new_read}" \
+    "${cur_7d_pct}" "${cur_7d_reset}" "${cur_7d_read}"
 
   # observed_at moves only when an effective percentage moves; a re-stamped
   # plateau carries the old stamp forward so consumers can spot a stale value.
@@ -567,13 +621,15 @@ write_cache() {
   jq -n \
     --argjson now "${NOW:-0}" \
     --argjson observed "${observed:-0}" \
-    --arg p5 "${eff_5h_pct}" --arg r5 "${eff_5h_reset}" \
-    --arg p7 "${eff_7d_pct}" --arg r7 "${eff_7d_reset}" \
-    '{schema: 2, written_at: $now, observed_at: $observed}
+    --arg p5 "${eff_5h_pct}" --arg r5 "${eff_5h_reset}" --arg d5 "${eff_5h_read}" \
+    --arg p7 "${eff_7d_pct}" --arg r7 "${eff_7d_reset}" --arg d7 "${eff_7d_read}" \
+    '{schema: 3, written_at: $now, observed_at: $observed}
      + (if $p5 != "" then {rate_5h_pct: ($p5 | tonumber)} else {} end)
      + (if $r5 != "" then {rate_5h_reset: ($r5 | tonumber)} else {} end)
+     + (if $r5 != "" and $d5 != "" then {rate_5h_read: ($d5 | tonumber)} else {} end)
      + (if $p7 != "" then {rate_7d_pct: ($p7 | tonumber)} else {} end)
-     + (if $r7 != "" then {rate_7d_reset: ($r7 | tonumber)} else {} end)' \
+     + (if $r7 != "" then {rate_7d_reset: ($r7 | tonumber)} else {} end)
+     + (if $r7 != "" and $d7 != "" then {rate_7d_read: ($d7 | tonumber)} else {} end)' \
     > "${TMP}"
   # Recheck: the path can become a directory after mktemp.
   if [[ -d "${file}" ]]; then
@@ -682,13 +738,14 @@ MODEL="(Missing Model)"
 CURRENT_DIR="(Missing Directory)"
 EFFORT="" THINKING="" PERCENT="" RATE_5H="" RATE_7D="" POOL=""
 RESET_5H="" RESET_7D="" CTX_SIZE="" CACHE_5H_PCT="" CACHE_7D_PCT=""
+CACHE_READ=""
 
 # Parse allowlisted NAME<US>value records once. Fields degrade independently;
 # display percentages are denoised and floored while cache values remain raw.
 while IFS=$'\037' read -r _field _value; do
   # Keep this assignment allowlist synchronized with the jq records.
   case "${_field}" in
-    HOST|MODEL|CURRENT_DIR|EFFORT|THINKING|PERCENT|RATE_5H|RATE_7D|RESET_5H|RESET_7D|CTX_SIZE|CACHE_5H_PCT|CACHE_7D_PCT|POOL) ;;
+    HOST|MODEL|CURRENT_DIR|EFFORT|THINKING|PERCENT|RATE_5H|RATE_7D|RESET_5H|RESET_7D|CTX_SIZE|CACHE_5H_PCT|CACHE_7D_PCT|CACHE_READ|POOL) ;;
     *) continue ;;
   esac
   printf -v "${_field}" '%s' "${_value}"
@@ -745,6 +802,20 @@ done < <(
                             then (.rate_limits.seven_day.used_percentage | tostring)
                           elif $host == "agy" and ((.quota[$pool + "-weekly"].remaining_fraction)? | type) == "number"
                             then ((1 - .quota[$pool + "-weekly"].remaining_fraction) * 100 | tostring)
+                          else "" end),
+    # Reply time of the numbers above: Claude Code sets prompt_cache.expires_at
+    # once per API reply as reply time plus the cache TTL, and the same reply
+    # carries the rate-limit headers. Subtracting the TTL recovers when the
+    # rate-limit numbers were last true. Claude host only; an unknown TTL or a
+    # missing field yields "" so the cache writer falls back to its old rule.
+    "CACHE_READ\u001f"  + (if $host == "claude"
+                              and ((.prompt_cache.expires_at)? | type) == "number"
+                              and ((.prompt_cache.ttl)? | type) == "string"
+                            then ((if .prompt_cache.ttl == "1h" then 3600
+                                   elif .prompt_cache.ttl == "5m" then 300
+                                   else null end) as $ttl
+                                  | if $ttl == null then ""
+                                    else ((.prompt_cache.expires_at | floor) - $ttl | tostring) end)
                           else "" end)
   ' 2>/dev/null
 )
