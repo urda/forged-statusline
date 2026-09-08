@@ -1,6 +1,6 @@
 # Urda's Forged Status Line CHANGELOG
 
-## [1.0.3] - Unreleased
+## [1.0.3] - 2026-09-08
 
 ### Added
 
